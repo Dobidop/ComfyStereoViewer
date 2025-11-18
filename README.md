@@ -1,13 +1,16 @@
 # ComfyStereoViewer
 
-A comprehensive stereoscopic 3D viewer for ComfyUI with VR headset support via WebXR. View stereo images and videos in immersive 3D with support for Quest, Vive, Index, and all WebXR-compatible devices.
+A comprehensive stereoscopic 3D viewer for ComfyUI with dual VR viewing modes: WebXR browser viewing and native PyOpenXR auto-launch. View stereo images and videos in immersive 3D with support for Quest, Vive, Index, and all VR headsets.
 
 ## Features
 
-- **VR Headset Support**: Full WebXR integration for immersive viewing
+- **Dual Viewing Modes**:
+  - **WebXR Browser Viewer**: Works immediately, no setup required
+  - **Native PyOpenXR Viewer**: Auto-launches into VR headset without browser
+- **VR Headset Support**: Quest, Vive, Index, WMR, and all VR devices
 - **Multiple Stereo Formats**: Side-by-Side, Over-Under, Anaglyph, and Separate L/R
 - **Image & Video Support**: View both stereo images and videos
-- **Cross-Platform**: Works on desktop, mobile, and VR headsets
+- **Hybrid Auto-Select**: Automatically chooses best viewer for your setup
 - **Real-time Controls**: Adjust IPD, FOV, and stereo settings on the fly
 - **ComfyUI Integration**: Seamless workflow integration with custom nodes
 
@@ -46,7 +49,13 @@ A comprehensive stereoscopic 3D viewer for ComfyUI with VR headset support via W
    pip install -r requirements.txt
    ```
 
-4. Restart ComfyUI
+4. **Optional - Native VR Viewer**: For auto-launch to VR headset without browser:
+   ```bash
+   pip install -r requirements-native.txt
+   ```
+   See [NATIVE_VIEWER_SETUP.md](NATIVE_VIEWER_SETUP.md) for detailed setup guide.
+
+5. Restart ComfyUI
 
 ## Available Nodes
 
@@ -115,6 +124,62 @@ Creates red-cyan anaglyph images from stereo pairs.
 
 **Outputs:**
 - Anaglyph image (IMAGE)
+
+### 6. Native Stereo Viewer (PyOpenXR) ⭐ NEW
+
+**Auto-launches directly into VR headset without browser!**
+
+Views stereoscopic images with native PyOpenXR rendering. Requires PyOpenXR installation and VR runtime (SteamVR/Oculus).
+
+**Inputs:**
+- `image` (IMAGE): The stereo image to view
+- `stereo_format`: Side-by-Side, Over-Under, Anaglyph, or Mono
+- `swap_eyes` (BOOLEAN): Swap left and right eye views
+- `auto_launch` (BOOLEAN): Automatically launch into VR headset
+- `right_image` (IMAGE, optional): Separate right eye image
+
+**Outputs:**
+- `passthrough` (IMAGE): Original image passed through
+
+**Advantages:**
+- ✅ Auto-launches into headset (no browser needed)
+- ✅ Better performance
+- ✅ Lower latency
+- ✅ No "Enter VR" button click required
+
+**Requirements:**
+- PyOpenXR installed (`pip install -r requirements-native.txt`)
+- VR runtime (SteamVR, Oculus, or WMR)
+- See [NATIVE_VIEWER_SETUP.md](NATIVE_VIEWER_SETUP.md) for setup guide
+
+### 7. Hybrid Stereo Viewer (Auto) 🎯 RECOMMENDED
+
+**Automatically selects the best viewer for your setup.**
+
+Tries native PyOpenXR viewer first, falls back to WebXR if not available.
+
+**Inputs:**
+- `image` (IMAGE): The stereo image to view
+- `stereo_format`: Side-by-Side, Over-Under, Anaglyph, or Mono
+- `swap_eyes` (BOOLEAN): Swap eyes
+- `prefer_native` (BOOLEAN): Prefer native viewer if available (default: true)
+- `right_image` (IMAGE, optional): Separate right eye image
+
+**Outputs:**
+- `passthrough` (IMAGE): Original image
+- `viewer_type` (STRING): Which viewer was used ("native_pyopenxr" or "webxr_browser")
+
+**This is the recommended node for most users!**
+
+### 8. Check Native VR Status
+
+Diagnostic node to check if native VR viewing is available.
+
+**Outputs:**
+- `status_message` (STRING): Detailed status information
+- `is_available` (BOOLEAN): Whether native VR is ready
+
+**Use this to verify your PyOpenXR setup.**
 
 ## Usage Examples
 
