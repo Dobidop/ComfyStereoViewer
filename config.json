@@ -1,0 +1,45 @@
+{
+  "viewer": {
+    "default_stereo_format": "sbs",
+    "default_ipd_scale": 1.0,
+    "default_fov": 90,
+    "enable_vr": true,
+    "enable_fullscreen": true,
+    "sphere_resolution": {
+      "width_segments": 60,
+      "height_segments": 40
+    },
+    "sphere_radius": 500
+  },
+  "supported_formats": {
+    "images": [".png", ".jpg", ".jpeg", ".webp", ".bmp"],
+    "videos": [".mp4", ".webm", ".ogv", ".mov"]
+  },
+  "stereo_formats": {
+    "sbs": {
+      "name": "Side-by-Side",
+      "description": "Left and right images placed horizontally"
+    },
+    "ou": {
+      "name": "Over-Under",
+      "description": "Left and right images stacked vertically"
+    },
+    "anaglyph": {
+      "name": "Anaglyph",
+      "description": "Red-cyan 3D (requires 3D glasses)"
+    },
+    "mono": {
+      "name": "Mono (2D)",
+      "description": "Standard 2D viewing"
+    }
+  },
+  "webxr": {
+    "required_features": [],
+    "optional_features": ["local-floor", "bounded-floor", "hand-tracking"]
+  },
+  "performance": {
+    "max_texture_size": 4096,
+    "enable_texture_compression": true,
+    "target_framerate": 90
+  }
+}
