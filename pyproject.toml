@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comfy-stereo-viewer"
+version = "1.0.0"
+description = "Stereoscopic 3D viewer for ComfyUI with VR headset support"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Dobidop", email = "67412288+Dobidop@users.noreply.github.com"}
+]
+keywords = ["comfyui", "stereoscopic", "3d", "vr", "webxr", "viewer"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Multimedia :: Graphics :: Viewers",
+    "Topic :: Multimedia :: Video :: Display",
+]
+
+dependencies = [
+    "torch",
+    "torchvision",
+    "numpy",
+    "Pillow",
+    "opencv-python",
+    "aiohttp",
+]
+
+[project.urls]
+Homepage = "https://github.com/Dobidop/ComfyStereoViewer"
+Repository = "https://github.com/Dobidop/ComfyStereoViewer"
+Issues = "https://github.com/Dobidop/ComfyStereoViewer/issues"
