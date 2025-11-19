@@ -74,6 +74,7 @@ class PersistentNativeViewer:
         self.current_projection = "flat"
         self.current_screen_size = 3.0
         self.current_screen_distance = 3.0
+        self.current_aspect_ratio = 16.0 / 9.0  # Default aspect ratio
 
         # Viewer state
         self.running = False
@@ -243,15 +244,19 @@ class PersistentNativeViewer:
     def create_geometry(self):
         """Create geometry based on current projection type"""
         if self.current_projection == "flat":
+            # Use actual image aspect ratio instead of hardcoded 4:3
+            height = self.current_screen_size / self.current_aspect_ratio
             self.create_flat_screen(
                 width=self.current_screen_size,
-                height=self.current_screen_size * 0.75,  # 4:3 aspect ratio
+                height=height,
                 distance=self.current_screen_distance
             )
         elif self.current_projection == "curved":
+            # Use actual image aspect ratio
+            height = self.current_screen_size / self.current_aspect_ratio
             self.create_curved_screen(
                 width=self.current_screen_size,
-                height=self.current_screen_size * 0.75,
+                height=height,
                 distance=self.current_screen_distance,
                 curve_amount=0.4
             )
@@ -356,6 +361,26 @@ class PersistentNativeViewer:
             img_data = np.array(img, dtype=np.uint8)
 
             print(f"   Image size: {img.width}x{img.height}, channels: {img_data.shape}")
+
+            # Calculate aspect ratio from actual image
+            # For stereo side-by-side, divide width by 2 to get per-eye aspect ratio
+            if self.current_format == StereoFormat.SIDE_BY_SIDE:
+                aspect_ratio = (img.width / 2.0) / img.height
+            elif self.current_format == StereoFormat.OVER_UNDER:
+                aspect_ratio = img.width / (img.height / 2.0)
+            else:
+                # Mono or anaglyph use full image
+                aspect_ratio = img.width / img.height
+
+            print(f"   Calculated aspect ratio: {aspect_ratio:.3f} ({img.width}x{img.height})")
+
+            # Check if aspect ratio changed significantly (trigger geometry rebuild)
+            if abs(self.current_aspect_ratio - aspect_ratio) > 0.01:
+                print(f"   Aspect ratio changed: {self.current_aspect_ratio:.3f} → {aspect_ratio:.3f}")
+                self.current_aspect_ratio = aspect_ratio
+                # Only update geometry for flat/curved projections that respect aspect ratio
+                if self.current_projection in ["flat", "curved"]:
+                    self.geometry_needs_update = True
 
             if self.texture_id is None:
                 # Create new texture
