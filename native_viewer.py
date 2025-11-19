@@ -15,6 +15,7 @@ from pathlib import Path
 
 try:
     import xr
+    from xr.utils import Matrix4x4f, GraphicsAPI  # FIXED: Correct import location
     from xr.utils.gl import ContextObject
     from xr.utils.gl.glfw_util import GLFWOffscreenContextProvider
     from OpenGL import GL
@@ -356,20 +357,20 @@ class PersistentNativeViewer:
                         GL.glUseProgram(self.shader_program)
 
                         # Set up projection matrix
-                        projection = xr.Matrix4x4f.create_projection_fov(
-                            graphics_api=xr.GraphicsAPI.OPENGL,
+                        projection = Matrix4x4f.create_projection_fov(
+                            graphics_api=GraphicsAPI.OPENGL,
                             fov=view.fov,
                             near_z=0.1,
                             far_z=100.0,
                         )
 
                         # Set up view matrix
-                        to_view = xr.Matrix4x4f.create_translation_rotation_scale(
+                        to_view = Matrix4x4f.create_translation_rotation_scale(
                             translation=view.pose.position,
                             rotation=view.pose.orientation,
                             scale=(1, 1, 1),
                         )
-                        view_matrix = xr.Matrix4x4f.invert_rigid_body(to_view)
+                        view_matrix = Matrix4x4f.invert_rigid_body(to_view)
 
                         # Model matrix
                         model_matrix = np.eye(4, dtype=np.float32)
@@ -382,9 +383,9 @@ class PersistentNativeViewer:
                         eye_loc = GL.glGetUniformLocation(self.shader_program, "eyeIndex")
                         swap_loc = GL.glGetUniformLocation(self.shader_program, "swapEyes")
 
-                        GL.glUniformMatrix4fv(proj_loc, 1, GL.GL_FALSE, np.array(projection.as_numpy(), dtype=np.float32))
-                        GL.glUniformMatrix4fv(view_loc, 1, GL.GL_FALSE, np.array(view_matrix.as_numpy(), dtype=np.float32))
-                        GL.glUniformMatrix4fv(model_loc, 1, GL.GL_FALSE, model_matrix)
+                        GL.glUniformMatrix4fv(proj_loc, 1, GL.GL_FALSE, projection.as_numpy().flatten("F"))
+                        GL.glUniformMatrix4fv(view_loc, 1, GL.GL_FALSE, view_matrix.as_numpy().flatten("F"))
+                        GL.glUniformMatrix4fv(model_loc, 1, GL.GL_FALSE, model_matrix.flatten("F"))
                         GL.glUniform1i(format_loc, format_int)
                         GL.glUniform1i(eye_loc, view_index)
                         GL.glUniform1i(swap_loc, 1 if self.current_swap else 0)
@@ -415,17 +416,22 @@ class PersistentNativeViewer:
             import traceback
             traceback.print_exc()
         finally:
-            # Cleanup
-            if self.texture_id:
-                GL.glDeleteTextures([self.texture_id])
-            if self.vao:
-                GL.glDeleteVertexArrays(1, [self.vao])
-            if self.vbo:
-                GL.glDeleteBuffers(1, [self.vbo])
-            if self.ebo:
-                GL.glDeleteBuffers(1, [self.ebo])
-            if self.shader_program:
-                GL.glDeleteProgram(self.shader_program)
+            # Cleanup OpenGL resources
+            # Wrap in try-except as OpenGL context may already be destroyed
+            try:
+                if self.texture_id:
+                    GL.glDeleteTextures([self.texture_id])
+                if self.vao:
+                    GL.glDeleteVertexArrays(1, [self.vao])
+                if self.vbo:
+                    GL.glDeleteBuffers(1, [self.vbo])
+                if self.ebo:
+                    GL.glDeleteBuffers(1, [self.ebo])
+                if self.shader_program:
+                    GL.glDeleteProgram(self.shader_program)
+            except Exception as cleanup_error:
+                # Ignore cleanup errors (context likely already destroyed)
+                pass
 
             self.running = False
             print("\n✓ VR viewer stopped cleanly")
