@@ -73,7 +73,7 @@ class PersistentNativeViewer:
         self.running = False
         self.should_stop = False
 
-    def create_sphere_mesh(self, radius=10.0, segments=60, rings=40):
+    def create_sphere_mesh(self, radius=100.0, segments=60, rings=40):
         """Create sphere geometry for 360° viewing"""
         vertices = []
         indices = []
@@ -202,26 +202,36 @@ class PersistentNativeViewer:
 
     def load_texture(self, image_path):
         """Load or update image as OpenGL texture"""
-        img = Image.open(image_path)
-        img = img.convert('RGB')
-        img_data = np.array(img, dtype=np.uint8)
+        try:
+            print(f"   Loading texture from: {image_path}")
+            img = Image.open(image_path)
+            img = img.convert('RGB')
+            img_data = np.array(img, dtype=np.uint8)
 
-        if self.texture_id is None:
-            # Create new texture
-            self.texture_id = GL.glGenTextures(1)
+            print(f"   Image size: {img.width}x{img.height}, channels: {img_data.shape}")
 
-        GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_id)
+            if self.texture_id is None:
+                # Create new texture
+                self.texture_id = GL.glGenTextures(1)
+                print(f"   Created texture ID: {self.texture_id}")
 
-        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
-        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT)
-        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
-        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_id)
 
-        GL.glTexImage2D(
-            GL.GL_TEXTURE_2D, 0, GL.GL_RGB,
-            img.width, img.height, 0,
-            GL.GL_RGB, GL.GL_UNSIGNED_BYTE, img_data
-        )
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+
+            GL.glTexImage2D(
+                GL.GL_TEXTURE_2D, 0, GL.GL_RGB,
+                img.width, img.height, 0,
+                GL.GL_RGB, GL.GL_UNSIGNED_BYTE, img_data
+            )
+
+            print(f"   ✓ Texture loaded successfully!")
+        except Exception as e:
+            print(f"   ✗ Error loading texture: {e}")
+            raise
 
     def setup_geometry(self):
         """Set up VAO and VBO for sphere mesh"""
@@ -322,13 +332,18 @@ class PersistentNativeViewer:
 
                 # Enable depth testing
                 GL.glEnable(GL.GL_DEPTH_TEST)
-                GL.glEnable(GL.GL_CULL_FACE)
-                GL.glCullFace(GL.GL_FRONT)
+                # Disable culling temporarily for debugging
+                # GL.glEnable(GL.GL_CULL_FACE)
+                # GL.glCullFace(GL.GL_FRONT)
 
                 print("✓ VR session started successfully!")
-                print("✓ Headset is ready for viewing\n")
+                print("✓ Headset is ready for viewing")
+                print(f"✓ Texture ID: {self.texture_id}")
+                print(f"✓ Sphere vertices: {len(self.sphere_vertices) // 5}")
+                print(f"✓ Sphere indices: {len(self.sphere_indices)}\n")
 
                 frame_count = 0
+                frames_rendered = 0
 
                 for frame_index, frame_state in enumerate(context.frame_loop()):
                     # Check for stop signal
@@ -345,13 +360,21 @@ class PersistentNativeViewer:
                     # Render to each eye
                     for view_index, view in enumerate(context.view_loop(frame_state)):
 
-                        # Clear buffers
-                        GL.glClearColor(0.0, 0.0, 0.0, 1.0)
+                        # Clear buffers - use dark blue to distinguish from black
+                        GL.glClearColor(0.0, 0.0, 0.3, 1.0)  # Dark blue background
                         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
                         if self.texture_id is None:
-                            # No image loaded yet, show black
+                            # No image loaded yet, show dark blue background
+                            if frame_count == 0:
+                                print("⚠️  Waiting for image to load...")
                             continue
+
+                        # Debug: Print first frame render
+                        if frames_rendered == 0:
+                            print(f"🎬 Rendering first frame (eye {view_index})")
+
+                        frames_rendered += 1
 
                         # Use shader
                         GL.glUseProgram(self.shader_program)
@@ -361,7 +384,7 @@ class PersistentNativeViewer:
                             graphics_api=GraphicsAPI.OPENGL,
                             fov=view.fov,
                             near_z=0.1,
-                            far_z=100.0,
+                            far_z=1000.0,  # Increased for larger sphere
                         )
 
                         # Set up view matrix
