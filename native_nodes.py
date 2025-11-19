@@ -41,6 +41,9 @@ class NativeStereoImageViewer:
             "required": {
                 "image": ("IMAGE",),
                 "stereo_format": (["Side-by-Side", "Over-Under", "Anaglyph", "Mono"],),
+                "projection_type": (["Flat Screen", "Curved Screen", "180° Dome", "360° Sphere"],),
+                "screen_size": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10.0, "step": 0.5}),
+                "screen_distance": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10.0, "step": 0.5}),
                 "swap_eyes": ("BOOLEAN", {"default": False}),
                 "auto_launch": ("BOOLEAN", {"default": True}),
             },
@@ -55,7 +58,7 @@ class NativeStereoImageViewer:
     OUTPUT_NODE = True
     CATEGORY = "stereo/native"
 
-    def view_stereo_native(self, image, stereo_format, swap_eyes=False, auto_launch=True, right_image=None):
+    def view_stereo_native(self, image, stereo_format, projection_type, screen_size, screen_distance, swap_eyes=False, auto_launch=True, right_image=None):
         """
         View stereo image in VR headset using native PyOpenXR viewer.
         Auto-launches directly into headset.
@@ -125,12 +128,26 @@ class NativeStereoImageViewer:
 
         internal_format = format_map.get(stereo_format, StereoFormat.SIDE_BY_SIDE)
 
+        # Map projection type to internal format
+        projection_map = {
+            "Flat Screen": "flat",
+            "Curved Screen": "curved",
+            "180° Dome": "dome180",
+            "360° Sphere": "sphere360",
+        }
+        internal_projection = projection_map.get(projection_type, "flat")
+
         if auto_launch:
             print(f"{'='*60}\n")
 
             # Launch or update the persistent viewer
             # The viewer handles its own threading internally
-            success = launch_native_viewer(filepath, internal_format, swap_eyes)
+            success = launch_native_viewer(
+                filepath, internal_format, swap_eyes,
+                projection_type=internal_projection,
+                screen_size=screen_size,
+                screen_distance=screen_distance
+            )
 
             if success:
                 print("✓ VR viewer updated successfully")

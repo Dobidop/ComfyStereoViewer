@@ -37,10 +37,13 @@ class StereoFormat:
 
 class ImageUpdate:
     """Represents an image update for the viewer"""
-    def __init__(self, image_path, stereo_format, swap_eyes):
+    def __init__(self, image_path, stereo_format, swap_eyes, projection_type="flat", screen_size=3.0, screen_distance=3.0):
         self.image_path = image_path
         self.stereo_format = stereo_format
         self.swap_eyes = swap_eyes
+        self.projection_type = projection_type
+        self.screen_size = screen_size
+        self.screen_distance = screen_distance
 
 
 class PersistentNativeViewer:
@@ -68,10 +71,14 @@ class PersistentNativeViewer:
         self.current_image = None
         self.current_format = StereoFormat.SIDE_BY_SIDE
         self.current_swap = False
+        self.current_projection = "flat"
+        self.current_screen_size = 3.0
+        self.current_screen_distance = 3.0
 
         # Viewer state
         self.running = False
         self.should_stop = False
+        self.geometry_needs_update = False
 
     def create_sphere_mesh(self, radius=100.0, segments=60, rings=40):
         """Create sphere geometry for 360° viewing"""
@@ -112,6 +119,146 @@ class PersistentNativeViewer:
 
         self.sphere_vertices = np.array(vertices, dtype=np.float32)
         self.sphere_indices = np.array(indices, dtype=np.uint32)
+
+    def create_flat_screen(self, width=3.0, height=2.25, distance=3.0):
+        """Create flat screen geometry (like a cinema screen in VR)"""
+        vertices = []
+        indices = []
+
+        # Calculate aspect ratio preserving dimensions
+        half_width = width / 2.0
+        half_height = height / 2.0
+
+        # Create a simple quad facing the viewer
+        # Position the screen at the given distance
+        z = -distance
+
+        # Four corners of the screen
+        positions = [
+            [-half_width, -half_height, z],  # Bottom left
+            [half_width, -half_height, z],   # Bottom right
+            [half_width, half_height, z],    # Top right
+            [-half_width, half_height, z],   # Top left
+        ]
+
+        # UV coordinates
+        uvs = [
+            [0.0, 1.0],  # Bottom left
+            [1.0, 1.0],  # Bottom right
+            [1.0, 0.0],  # Top right
+            [0.0, 0.0],  # Top left
+        ]
+
+        # Build vertices
+        for i in range(4):
+            vertices.extend(positions[i])
+            vertices.extend(uvs[i])
+
+        # Two triangles to form the quad
+        indices = [0, 1, 2, 0, 2, 3]
+
+        self.sphere_vertices = np.array(vertices, dtype=np.float32)
+        self.sphere_indices = np.array(indices, dtype=np.uint32)
+
+    def create_curved_screen(self, width=3.0, height=2.25, distance=3.0, curve_amount=0.3):
+        """Create curved screen geometry (gently curved like IMAX)"""
+        vertices = []
+        indices = []
+
+        segments_h = 20  # Horizontal segments for curvature
+        segments_v = 10  # Vertical segments
+
+        half_height = height / 2.0
+
+        for v in range(segments_v + 1):
+            y = -half_height + (v / segments_v) * height
+            v_uv = 1.0 - (v / segments_v)
+
+            for h in range(segments_h + 1):
+                # Create curve using an arc
+                angle = (h / segments_h - 0.5) * math.pi * curve_amount
+                x = distance * math.sin(angle)
+                z = -distance * math.cos(angle)
+
+                # Scale x based on desired width
+                x = x * (width / (2.0 * distance * math.sin(math.pi * curve_amount / 2.0)))
+
+                u = h / segments_h
+
+                vertices.extend([x, y, z, u, v_uv])
+
+        # Generate indices
+        for v in range(segments_v):
+            for h in range(segments_h):
+                first = v * (segments_h + 1) + h
+                second = first + segments_h + 1
+
+                indices.extend([first, second, first + 1])
+                indices.extend([second, second + 1, first + 1])
+
+        self.sphere_vertices = np.array(vertices, dtype=np.float32)
+        self.sphere_indices = np.array(indices, dtype=np.uint32)
+
+    def create_dome_180(self, radius=10.0, segments=60):
+        """Create 180° dome/hemisphere geometry"""
+        vertices = []
+        indices = []
+
+        rings = segments // 2
+
+        # Generate only the front hemisphere
+        for ring in range(rings + 1):
+            theta = ring * (math.pi / 2) / rings  # 0 to π/2 (front hemisphere)
+            sin_theta = math.sin(theta)
+            cos_theta = math.cos(theta)
+
+            for seg in range(segments + 1):
+                phi = seg * math.pi / segments  # 0 to π (180 degrees horizontally)
+                sin_phi = math.sin(phi)
+                cos_phi = math.cos(phi)
+
+                # Position
+                x = radius * sin_theta * sin_phi
+                y = radius * cos_theta
+                z = -radius * sin_theta * cos_phi
+
+                # UV coordinates
+                u = seg / segments
+                v = ring / rings
+
+                vertices.extend([x, y, z, u, v])
+
+        # Generate indices
+        for ring in range(rings):
+            for seg in range(segments):
+                first = ring * (segments + 1) + seg
+                second = first + segments + 1
+
+                indices.extend([first, second, first + 1])
+                indices.extend([second, second + 1, first + 1])
+
+        self.sphere_vertices = np.array(vertices, dtype=np.float32)
+        self.sphere_indices = np.array(indices, dtype=np.uint32)
+
+    def create_geometry(self):
+        """Create geometry based on current projection type"""
+        if self.current_projection == "flat":
+            self.create_flat_screen(
+                width=self.current_screen_size,
+                height=self.current_screen_size * 0.75,  # 4:3 aspect ratio
+                distance=self.current_screen_distance
+            )
+        elif self.current_projection == "curved":
+            self.create_curved_screen(
+                width=self.current_screen_size,
+                height=self.current_screen_size * 0.75,
+                distance=self.current_screen_distance,
+                curve_amount=0.4
+            )
+        elif self.current_projection == "dome180":
+            self.create_dome_180(radius=self.current_screen_distance * 2)
+        else:  # sphere360
+            self.create_sphere_mesh(radius=100.0)
 
     def create_shaders(self):
         """Create OpenGL shaders for rendering"""
@@ -234,8 +381,8 @@ class PersistentNativeViewer:
             raise
 
     def setup_geometry(self):
-        """Set up VAO and VBO for sphere mesh"""
-        self.create_sphere_mesh()
+        """Set up VAO and VBO for geometry based on projection type"""
+        self.create_geometry()
 
         # Create VAO
         self.vao = GL.glGenVertexArrays(1)
@@ -279,11 +426,23 @@ class PersistentNativeViewer:
         try:
             while not self.image_queue.empty():
                 update = self.image_queue.get_nowait()
+
+                # Check if projection type or size changed (requires geometry rebuild)
+                if (update.projection_type != self.current_projection or
+                    update.screen_size != self.current_screen_size or
+                    update.screen_distance != self.current_screen_distance):
+                    print(f"\n🔄 Projection changed: {self.current_projection} → {update.projection_type}")
+                    self.current_projection = update.projection_type
+                    self.current_screen_size = update.screen_size
+                    self.current_screen_distance = update.screen_distance
+                    self.geometry_needs_update = True
+
                 self.current_image = update.image_path
                 self.current_format = update.stereo_format
                 self.current_swap = update.swap_eyes
                 print(f"\n📷 Updating VR view with new image: {update.image_path}")
                 print(f"   Format: {update.stereo_format}, Swap: {update.swap_eyes}")
+                print(f"   Projection: {update.projection_type}, Size: {update.screen_size}m, Distance: {update.screen_distance}m")
                 # Reload texture with new image
                 self.load_texture(self.current_image)
         except queue.Empty:
@@ -354,6 +513,13 @@ class PersistentNativeViewer:
                     # Check for image updates every few frames
                     if frame_count % 30 == 0:
                         self.check_for_updates()
+
+                        # Rebuild geometry if projection type changed
+                        if self.geometry_needs_update:
+                            print("🔨 Rebuilding geometry...")
+                            self.setup_geometry()
+                            self.geometry_needs_update = False
+                            print("✓ Geometry updated!")
 
                     format_int = format_map.get(self.current_format, 0)
 
@@ -463,9 +629,9 @@ class PersistentNativeViewer:
         """Stop the viewer"""
         self.should_stop = True
 
-    def update_image(self, image_path, stereo_format, swap_eyes):
+    def update_image(self, image_path, stereo_format, swap_eyes, projection_type="flat", screen_size=3.0, screen_distance=3.0):
         """Queue a new image for display"""
-        update = ImageUpdate(image_path, stereo_format, swap_eyes)
+        update = ImageUpdate(image_path, stereo_format, swap_eyes, projection_type, screen_size, screen_distance)
         self.image_queue.put(update)
 
 
@@ -510,7 +676,7 @@ def check_openxr_available():
         return False, f"OpenXR runtime not available: {str(e)}"
 
 
-def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False):
+def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False, projection_type="flat", screen_size=3.0, screen_distance=3.0):
     """
     Launch or update the native viewer with a new image.
     If viewer is already running, updates it with the new image.
@@ -520,6 +686,9 @@ def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False):
         image_path: Path to stereo image
         stereo_format: Stereo format (sbs, ou, anaglyph, mono)
         swap_eyes: Whether to swap eyes
+        projection_type: Projection type (flat, curved, dome180, sphere360)
+        screen_size: Screen size in meters (for flat/curved/dome)
+        screen_distance: Distance from viewer in meters
 
     Returns:
         bool: True if successful, False if error
@@ -538,13 +707,16 @@ def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False):
         viewer = get_or_create_viewer()
 
         # Queue the new image
-        viewer.update_image(image_path, stereo_format, swap_eyes)
+        viewer.update_image(image_path, stereo_format, swap_eyes, projection_type, screen_size, screen_distance)
 
         # If this is the first image, set it as current
         if viewer.current_image is None:
             viewer.current_image = image_path
             viewer.current_format = stereo_format
             viewer.current_swap = swap_eyes
+            viewer.current_projection = projection_type
+            viewer.current_screen_size = screen_size
+            viewer.current_screen_distance = screen_distance
 
         return True
 
