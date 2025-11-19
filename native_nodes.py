@@ -10,8 +10,6 @@ import io
 import os
 import json
 import folder_paths
-import threading
-import subprocess
 import sys
 
 from .native_viewer import (
@@ -128,26 +126,17 @@ class NativeStereoImageViewer:
         internal_format = format_map.get(stereo_format, StereoFormat.SIDE_BY_SIDE)
 
         if auto_launch:
-            print("\nLaunching VR viewer...")
-            print("PUT ON YOUR HEADSET NOW!")
-            print("Press Ctrl+C in the console to exit VR mode")
             print(f"{'='*60}\n")
 
-            # Launch in a separate thread to avoid blocking ComfyUI
-            def launch_thread():
-                try:
-                    launch_native_viewer(filepath, internal_format, swap_eyes)
-                except Exception as e:
-                    print(f"Error in VR viewer: {e}")
-                    import traceback
-                    traceback.print_exc()
+            # Launch or update the persistent viewer
+            # The viewer handles its own threading internally
+            success = launch_native_viewer(filepath, internal_format, swap_eyes)
 
-            # Launch in background thread
-            thread = threading.Thread(target=launch_thread, daemon=True)
-            thread.start()
-
-            print("VR viewer launched in background.")
-            print("The viewer will continue running until you press Ctrl+C")
+            if success:
+                print("✓ VR viewer updated successfully")
+                print("✓ Run the workflow again to update with new images")
+            else:
+                print("✗ Failed to launch VR viewer")
         else:
             print("\nAuto-launch disabled.")
             print("To manually launch, run:")
