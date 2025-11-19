@@ -1,10 +1,15 @@
 """
 Native VR viewer using PyOpenXR
 Direct rendering to VR headsets without browser dependency
+Persistent viewer with image update queue
 """
 
 import sys
 import math
+import ctypes  # FIXED: Added missing import
+import threading
+import queue
+import time
 import numpy as np
 from pathlib import Path
 
@@ -29,10 +34,18 @@ class StereoFormat:
     SEPARATE = "separate"
 
 
-class NativeStereoViewer:
+class ImageUpdate:
+    """Represents an image update for the viewer"""
+    def __init__(self, image_path, stereo_format, swap_eyes):
+        self.image_path = image_path
+        self.stereo_format = stereo_format
+        self.swap_eyes = swap_eyes
+
+
+class PersistentNativeViewer:
     """
-    Native VR stereo viewer using PyOpenXR.
-    Renders stereo images and videos directly to VR headsets.
+    Persistent VR viewer that stays running and can receive new images.
+    Prevents multiple OpenXR instances and allows continuous updates.
     """
 
     def __init__(self):
@@ -45,8 +58,19 @@ class NativeStereoViewer:
         self.shader_program = None
         self.vao = None
         self.vbo = None
+        self.ebo = None
         self.sphere_vertices = None
         self.sphere_indices = None
+
+        # Image update queue
+        self.image_queue = queue.Queue()
+        self.current_image = None
+        self.current_format = StereoFormat.SIDE_BY_SIDE
+        self.current_swap = False
+
+        # Viewer state
+        self.running = False
+        self.should_stop = False
 
     def create_sphere_mesh(self, radius=10.0, segments=60, rings=40):
         """Create sphere geometry for 360° viewing"""
@@ -176,12 +200,15 @@ class NativeStereoViewer:
         GL.glDeleteShader(fragment_shader)
 
     def load_texture(self, image_path):
-        """Load image as OpenGL texture"""
+        """Load or update image as OpenGL texture"""
         img = Image.open(image_path)
         img = img.convert('RGB')
         img_data = np.array(img, dtype=np.uint8)
 
-        self.texture_id = GL.glGenTextures(1)
+        if self.texture_id is None:
+            # Create new texture
+            self.texture_id = GL.glGenTextures(1)
+
         GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_id)
 
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
@@ -236,57 +263,83 @@ class NativeStereoViewer:
 
         GL.glBindVertexArray(0)
 
-    def view_image(self, image_path, stereo_format=StereoFormat.SIDE_BY_SIDE,
-                   swap_eyes=False, max_frames=None):
-        """
-        View a stereo image in VR headset
+    def check_for_updates(self):
+        """Check if there's a new image to display"""
+        try:
+            while not self.image_queue.empty():
+                update = self.image_queue.get_nowait()
+                self.current_image = update.image_path
+                self.current_format = update.stereo_format
+                self.current_swap = update.swap_eyes
+                print(f"\n📷 Updating VR view with new image: {update.image_path}")
+                print(f"   Format: {update.stereo_format}, Swap: {update.swap_eyes}")
+                # Reload texture with new image
+                self.load_texture(self.current_image)
+        except queue.Empty:
+            pass
 
-        Args:
-            image_path: Path to the stereo image
-            stereo_format: Stereo format (sbs, ou, anaglyph, mono)
-            swap_eyes: Whether to swap left/right eyes
-            max_frames: Maximum number of frames to render (None for continuous)
-        """
-        print(f"Launching native VR viewer for: {image_path}")
-        print(f"Stereo format: {stereo_format}")
-        print(f"Swap eyes: {swap_eyes}")
+    def run(self):
+        """Main viewer loop - runs in background thread"""
+        self.running = True
+        self.should_stop = False
+
+        print("\n" + "="*60)
+        print("🥽 NATIVE VR VIEWER STARTING")
+        print("="*60)
+        print("PUT ON YOUR HEADSET NOW!")
+        print("\nControls:")
+        print("  - Look around naturally with your headset")
+        print("  - Run the workflow again to update the image")
+        print("  - Close ComfyUI to stop the viewer")
+        print("="*60 + "\n")
 
         # Map format strings to integers for shader
         format_map = {
             StereoFormat.SIDE_BY_SIDE: 0,
             StereoFormat.OVER_UNDER: 1,
             StereoFormat.ANAGLYPH: 2,
-            StereoFormat.MONO: 2,  # Use same as anaglyph (full texture)
+            StereoFormat.MONO: 2,
         }
 
-        format_int = format_map.get(stereo_format, 0)
+        try:
+            with ContextObject(
+                instance_create_info=xr.InstanceCreateInfo(
+                    enabled_extension_names=[
+                        xr.KHR_OPENGL_ENABLE_EXTENSION_NAME,
+                    ],
+                ),
+                context_provider=GLFWOffscreenContextProvider(),
+            ) as context:
 
-        with ContextObject(
-            instance_create_info=xr.InstanceCreateInfo(
-                enabled_extension_names=[
-                    xr.KHR_OPENGL_ENABLE_EXTENSION_NAME,
-                ],
-            ),
-            context_provider=GLFWOffscreenContextProvider(),
-        ) as context:
+                # Initialize OpenGL resources
+                self.create_shaders()
+                self.setup_geometry()
 
-            # Initialize OpenGL resources
-            self.create_shaders()
-            self.setup_geometry()
-            self.load_texture(image_path)
+                # Load initial image if available
+                if self.current_image:
+                    self.load_texture(self.current_image)
 
-            # Enable depth testing
-            GL.glEnable(GL.GL_DEPTH_TEST)
-            GL.glEnable(GL.GL_CULL_FACE)
-            GL.glCullFace(GL.GL_FRONT)  # Cull front faces for inside sphere viewing
+                # Enable depth testing
+                GL.glEnable(GL.GL_DEPTH_TEST)
+                GL.glEnable(GL.GL_CULL_FACE)
+                GL.glCullFace(GL.GL_FRONT)
 
-            print("VR session started. Put on your headset!")
-            print("Press Ctrl+C to exit...")
+                print("✓ VR session started successfully!")
+                print("✓ Headset is ready for viewing\n")
 
-            frame_count = 0
+                frame_count = 0
 
-            try:
                 for frame_index, frame_state in enumerate(context.frame_loop()):
+                    # Check for stop signal
+                    if self.should_stop:
+                        print("\n🛑 Stopping VR viewer...")
+                        break
+
+                    # Check for image updates every few frames
+                    if frame_count % 30 == 0:
+                        self.check_for_updates()
+
+                    format_int = format_map.get(self.current_format, 0)
 
                     # Render to each eye
                     for view_index, view in enumerate(context.view_loop(frame_state)):
@@ -294,6 +347,10 @@ class NativeStereoViewer:
                         # Clear buffers
                         GL.glClearColor(0.0, 0.0, 0.0, 1.0)
                         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
+
+                        if self.texture_id is None:
+                            # No image loaded yet, show black
+                            continue
 
                         # Use shader
                         GL.glUseProgram(self.shader_program)
@@ -314,7 +371,7 @@ class NativeStereoViewer:
                         )
                         view_matrix = xr.Matrix4x4f.invert_rigid_body(to_view)
 
-                        # Model matrix (identity for now)
+                        # Model matrix
                         model_matrix = np.eye(4, dtype=np.float32)
 
                         # Set uniforms
@@ -330,7 +387,7 @@ class NativeStereoViewer:
                         GL.glUniformMatrix4fv(model_loc, 1, GL.GL_FALSE, model_matrix)
                         GL.glUniform1i(format_loc, format_int)
                         GL.glUniform1i(eye_loc, view_index)
-                        GL.glUniform1i(swap_loc, 1 if swap_eyes else 0)
+                        GL.glUniform1i(swap_loc, 1 if self.current_swap else 0)
 
                         # Bind texture
                         GL.glActiveTexture(GL.GL_TEXTURE0)
@@ -349,13 +406,15 @@ class NativeStereoViewer:
 
                     frame_count += 1
 
-                    # Exit after max_frames if specified
-                    if max_frames and frame_count >= max_frames:
-                        break
-
-            except KeyboardInterrupt:
-                print("\nExiting VR viewer...")
-
+        except KeyboardInterrupt:
+            # FIXED: Catch KeyboardInterrupt so it doesn't propagate to ComfyUI
+            print("\n⚠️ Received interrupt signal (Ctrl+C)")
+            print("Note: To stop the viewer, close ComfyUI instead")
+        except Exception as e:
+            print(f"\n❌ Error in VR viewer: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
             # Cleanup
             if self.texture_id:
                 GL.glDeleteTextures([self.texture_id])
@@ -368,7 +427,45 @@ class NativeStereoViewer:
             if self.shader_program:
                 GL.glDeleteProgram(self.shader_program)
 
-            print("VR session ended.")
+            self.running = False
+            print("\n✓ VR viewer stopped cleanly")
+
+    def stop(self):
+        """Stop the viewer"""
+        self.should_stop = True
+
+    def update_image(self, image_path, stereo_format, swap_eyes):
+        """Queue a new image for display"""
+        update = ImageUpdate(image_path, stereo_format, swap_eyes)
+        self.image_queue.put(update)
+
+
+# Global persistent viewer instance
+_global_viewer = None
+_viewer_thread = None
+_viewer_lock = threading.Lock()
+
+
+def get_or_create_viewer():
+    """Get existing viewer or create new one (singleton pattern)"""
+    global _global_viewer, _viewer_thread
+
+    with _viewer_lock:
+        if _global_viewer is None or not _global_viewer.running:
+            _global_viewer = PersistentNativeViewer()
+            _viewer_thread = threading.Thread(target=_global_viewer.run, daemon=True)
+            _viewer_thread.start()
+            # Give it a moment to initialize
+            time.sleep(0.5)
+
+        return _global_viewer
+
+
+def stop_global_viewer():
+    """Stop the global viewer"""
+    global _global_viewer
+    if _global_viewer:
+        _global_viewer.stop()
 
 
 def check_openxr_available():
@@ -386,12 +483,17 @@ def check_openxr_available():
 
 def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False):
     """
-    Convenience function to launch the native viewer
+    Launch or update the native viewer with a new image.
+    If viewer is already running, updates it with the new image.
+    Otherwise, starts a new viewer.
 
     Args:
         image_path: Path to stereo image
         stereo_format: Stereo format (sbs, ou, anaglyph, mono)
         swap_eyes: Whether to swap eyes
+
+    Returns:
+        bool: True if successful, False if error
     """
     available, message = check_openxr_available()
 
@@ -404,9 +506,19 @@ def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False):
         return False
 
     try:
-        viewer = NativeStereoViewer()
-        viewer.view_image(image_path, stereo_format, swap_eyes)
+        viewer = get_or_create_viewer()
+
+        # Queue the new image
+        viewer.update_image(image_path, stereo_format, swap_eyes)
+
+        # If this is the first image, set it as current
+        if viewer.current_image is None:
+            viewer.current_image = image_path
+            viewer.current_format = stereo_format
+            viewer.current_swap = swap_eyes
+
         return True
+
     except Exception as e:
         print(f"Error launching native viewer: {e}")
         import traceback
@@ -425,4 +537,9 @@ if __name__ == "__main__":
     stereo_format = sys.argv[2] if len(sys.argv) > 2 else "sbs"
     swap_eyes = sys.argv[3].lower() == "true" if len(sys.argv) > 3 else False
 
-    launch_native_viewer(image_path, stereo_format, swap_eyes)
+    success = launch_native_viewer(image_path, stereo_format, swap_eyes)
+
+    if success:
+        print("\nViewer is running. Press Enter to exit...")
+        input()
+        stop_global_viewer()
