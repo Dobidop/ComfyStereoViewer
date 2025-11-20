@@ -40,7 +40,7 @@ class NativeStereoImageViewer:
         return {
             "required": {
                 "image": ("IMAGE",),
-                "stereo_format": (["Side-by-Side", "Over-Under", "Anaglyph", "Mono"],),
+                "stereo_format": (["Side-by-Side", "Over-Under", "Mono"],),
                 "projection_type": (["Flat Screen", "Curved Screen", "180° Dome", "360° Sphere"],),
                 "screen_size": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10.0, "step": 0.5}),
                 "screen_distance": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10.0, "step": 0.5}),
@@ -122,7 +122,6 @@ class NativeStereoImageViewer:
         format_map = {
             "Side-by-Side": StereoFormat.SIDE_BY_SIDE,
             "Over-Under": StereoFormat.OVER_UNDER,
-            "Anaglyph": StereoFormat.ANAGLYPH,
             "Mono": StereoFormat.MONO,
         }
 
@@ -225,88 +224,130 @@ class NativeVRStatus:
         return (status_text, available)
 
 
-class HybridStereoImageViewer:
+class NativeStereoVideoViewer:
     """
-    Hybrid stereo viewer that automatically chooses the best viewing method:
-    - Native PyOpenXR viewer if available (best performance, auto-launch)
-    - WebXR browser viewer as fallback (maximum compatibility)
+    Native VR stereo video viewer using PyOpenXR.
+    Plays stereo videos directly in VR headset with keyboard controls.
+    Requires OpenXR runtime (SteamVR, Oculus, WMR).
     """
 
     def __init__(self):
-        self.output_dir = folder_paths.get_temp_directory()
         self.type = "output"
-        self.prefix_append = "hybrid_stereo_view"
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "image": ("IMAGE",),
-                "stereo_format": (["Side-by-Side", "Over-Under", "Anaglyph", "Mono"],),
+                "video_path": ("STRING", {"default": "", "multiline": False}),
+                "stereo_format": (["Side-by-Side", "Over-Under", "Mono"],),
+                "projection_type": (["Flat Screen", "Curved Screen", "180° Dome", "360° Sphere"],),
+                "screen_size": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10.0, "step": 0.5}),
+                "screen_distance": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 10.0, "step": 0.5}),
                 "swap_eyes": ("BOOLEAN", {"default": False}),
-                "prefer_native": ("BOOLEAN", {"default": True}),
-            },
-            "optional": {
-                "right_image": ("IMAGE",),
+                "loop_video": ("BOOLEAN", {"default": True}),
+                "auto_launch": ("BOOLEAN", {"default": True}),
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("passthrough", "viewer_type")
-    FUNCTION = "view_stereo_hybrid"
+    RETURN_TYPES = ()
+    FUNCTION = "view_stereo_video"
     OUTPUT_NODE = True
-    CATEGORY = "stereo"
+    CATEGORY = "stereo/native"
 
-    def view_stereo_hybrid(self, image, stereo_format, swap_eyes=False, prefer_native=True, right_image=None):
+    def view_stereo_video(self, video_path, stereo_format, projection_type, screen_size, screen_distance, swap_eyes=False, loop_video=True, auto_launch=True):
         """
-        Automatically select best viewer: native PyOpenXR or WebXR fallback
+        View stereo video in VR headset using native PyOpenXR viewer.
+        Auto-launches directly into headset with video playback controls.
         """
-        # Check if native viewer is available
-        native_available, message = check_openxr_available()
+        # Check if PyOpenXR is available
+        available, message = check_openxr_available()
 
-        viewer_type = "unknown"
+        if not available:
+            print(f"\n{'='*60}")
+            print("NATIVE VR VIEWER NOT AVAILABLE")
+            print(f"{'='*60}")
+            print(f"Reason: {message}")
+            print("\nTo enable native VR viewing:")
+            print("1. Install PyOpenXR dependencies:")
+            print("   pip install pyopenxr PyOpenGL PyOpenGL_accelerate glfw opencv-python")
+            print("2. Install a VR runtime:")
+            print("   - SteamVR (recommended, supports most headsets)")
+            print("   - Oculus Runtime (for Oculus headsets)")
+            print("   - Windows Mixed Reality (built into Windows)")
+            print("3. Connect your VR headset")
+            print(f"{'='*60}\n")
+            return ()
 
-        if native_available and prefer_native:
-            # Use native viewer
-            print("\n✓ Using NATIVE PyOpenXR viewer (best performance)")
-            from .native_nodes import NativeStereoImageViewer
-            viewer = NativeStereoImageViewer()
-            result = viewer.view_stereo_native(
-                image=image,
-                stereo_format=stereo_format,
-                swap_eyes=swap_eyes,
-                auto_launch=True,
-                right_image=right_image
+        # Check if video file exists
+        if not os.path.exists(video_path):
+            print(f"\n{'='*60}")
+            print("ERROR: Video file not found")
+            print(f"{'='*60}")
+            print(f"Path: {video_path}")
+            print(f"{'='*60}\n")
+            return ()
+
+        print(f"\n{'='*60}")
+        print("NATIVE VR VIDEO VIEWER")
+        print(f"{'='*60}")
+        print(f"Video file: {video_path}")
+        print(f"Stereo format: {stereo_format}")
+        print(f"Swap eyes: {swap_eyes}")
+        print(f"Loop: {loop_video}")
+
+        # Map format to internal format strings
+        format_map = {
+            "Side-by-Side": StereoFormat.SIDE_BY_SIDE,
+            "Over-Under": StereoFormat.OVER_UNDER,
+            "Mono": StereoFormat.MONO,
+        }
+
+        internal_format = format_map.get(stereo_format, StereoFormat.SIDE_BY_SIDE)
+
+        # Map projection type to internal format
+        projection_map = {
+            "Flat Screen": "flat",
+            "Curved Screen": "curved",
+            "180° Dome": "dome180",
+            "360° Sphere": "sphere360",
+        }
+        internal_projection = projection_map.get(projection_type, "flat")
+
+        if auto_launch:
+            print(f"{'='*60}\n")
+
+            # Launch or update the persistent viewer with video
+            success = launch_native_viewer(
+                video_path, internal_format, swap_eyes,
+                projection_type=internal_projection,
+                screen_size=screen_size,
+                screen_distance=screen_distance,
+                is_video=True,
+                loop_video=loop_video
             )
-            viewer_type = "native_pyopenxr"
+
+            if success:
+                print("✓ VR video viewer updated successfully")
+                print("✓ Use keyboard controls to play/pause/seek")
+            else:
+                print("✗ Failed to launch VR video viewer")
         else:
-            # Fall back to WebXR viewer
-            if not native_available:
-                print(f"\n→ Native viewer not available: {message}")
-            print("→ Falling back to WebXR browser viewer")
-            from .nodes import StereoImageViewer
-            viewer = StereoImageViewer()
-            result = viewer.view_stereo(
-                image=image,
-                stereo_format=stereo_format,
-                swap_eyes=swap_eyes,
-                right_image=right_image
-            )
-            viewer_type = "webxr_browser"
+            print("\nAuto-launch disabled.")
+            print(f"{'='*60}\n")
 
-        return (result[0], viewer_type)
+        return ()
 
 
 # Node class mappings for native nodes
 NODE_CLASS_MAPPINGS = {
     "NativeStereoImageViewer": NativeStereoImageViewer,
+    "NativeStereoVideoViewer": NativeStereoVideoViewer,
     "NativeVRStatus": NativeVRStatus,
-    "HybridStereoImageViewer": HybridStereoImageViewer,
 }
 
 # Display name mappings
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "NativeStereoImageViewer": "Native Stereo Viewer (PyOpenXR)",
+    "NativeStereoImageViewer": "Native Stereo Image Viewer (PyOpenXR)",
+    "NativeStereoVideoViewer": "Native Stereo Video Viewer (PyOpenXR)",
     "NativeVRStatus": "Check Native VR Status",
-    "HybridStereoImageViewer": "Hybrid Stereo Viewer (Auto)",
 }
