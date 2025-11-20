@@ -155,6 +155,7 @@ class PersistentNativeViewer:
         self.help_shader_program = None
         self.help_vao = None
         self.help_vbo = None
+        self.help_overlay_initialized = False
 
     def create_sphere_mesh(self, radius=100.0, segments=60, rings=40):
         """Create sphere geometry for 360° viewing"""
@@ -623,6 +624,18 @@ class PersistentNativeViewer:
 
         # Make the GLFW window's context current
         glfw.make_context_current(self.glfw_window)
+
+        # Initialize help overlay resources on first use (must be in GLFW context)
+        if not self.help_overlay_initialized:
+            try:
+                self.create_help_shaders()
+                self.setup_help_overlay_geometry()
+                self.create_help_overlay()
+                self.help_overlay_initialized = True
+                print("✓ Help overlay initialized in control window context")
+            except Exception as e:
+                print(f"⚠️  Failed to initialize help overlay: {e}")
+                self.help_overlay_initialized = True  # Don't try again
 
         # Clear to dark gray background
         GL.glClearColor(0.1, 0.1, 0.1, 1.0)
@@ -1194,14 +1207,9 @@ class PersistentNativeViewer:
                 glfw.set_key_callback(self.glfw_window, self.keyboard_callback)
                 print("✓ Keyboard controls enabled (focus the control window to use keys)")
 
-                # Initialize OpenGL resources
+                # Initialize OpenGL resources for VR (in OpenXR context)
                 self.create_shaders()
                 self.setup_geometry()
-
-                # Initialize help overlay resources
-                self.create_help_shaders()
-                self.setup_help_overlay_geometry()
-                self.create_help_overlay()
 
                 # Load initial media if available
                 if self.current_media:
