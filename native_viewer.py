@@ -702,18 +702,21 @@ class PersistentNativeViewer:
         }
 
         try:
+            # Create context provider first so we can access the window
+            context_provider = GLFWOffscreenContextProvider()
+
             with ContextObject(
                 instance_create_info=xr.InstanceCreateInfo(
                     enabled_extension_names=[
                         xr.KHR_OPENGL_ENABLE_EXTENSION_NAME,
                     ],
                 ),
-                context_provider=GLFWOffscreenContextProvider(),
+                context_provider=context_provider,
             ) as context:
 
                 # Get GLFW window and set up keyboard callback
-                if hasattr(context.graphics_provider, 'window'):
-                    self.glfw_window = context.graphics_provider.window
+                if hasattr(context_provider, 'window'):
+                    self.glfw_window = context_provider.window
                     glfw.set_key_callback(self.glfw_window, self.keyboard_callback)
                     print("✓ Keyboard controls enabled")
 
