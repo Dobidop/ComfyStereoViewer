@@ -1359,18 +1359,22 @@ class PersistentNativeViewer:
                 # If we get here, the session completed successfully
                 break
 
-            except xr.exception.GraphicsRequirementsCallMissingError as e:
+            except (xr.exception.GraphicsRequirementsCallMissingError, xr.exception.LimitReachedError) as e:
                 # OpenXR runtime needs more time to clean up from previous session
                 retry_count += 1
+                error_type = "Instance limit reached" if isinstance(e, xr.exception.LimitReachedError) else "Graphics requirements missing"
                 if retry_count <= max_retries:
-                    wait_time = retry_count * 1.5  # 1.5s, then 3s
-                    print(f"\n⚠️  OpenXR session creation failed (attempt {retry_count}/{max_retries})")
+                    wait_time = retry_count * 2.0  # 2s, then 4s
+                    print(f"\n⚠️  OpenXR session creation failed: {error_type}")
+                    print(f"   Attempt {retry_count}/{max_retries}")
                     print(f"   Waiting {wait_time}s for runtime cleanup before retry...")
                     time.sleep(wait_time)
                     continue
                 else:
                     print(f"\n❌ Failed to create OpenXR session after {max_retries} retries")
-                    print("   Try waiting longer before restarting the viewer")
+                    print(f"   Error: {error_type}")
+                    print("   The OpenXR instance from the previous session may not have cleaned up yet.")
+                    print("   Try waiting 5-10 seconds before running another workflow.")
                     raise
 
             except KeyboardInterrupt:
@@ -1419,11 +1423,6 @@ class PersistentNativeViewer:
 
         self.running = False
 
-        # Clear global reference to this viewer instance
-        global _global_viewer
-        if _global_viewer is self:
-            _global_viewer = None
-
         print("\n✓ VR viewer stopped cleanly")
 
     def stop(self):
@@ -1451,17 +1450,21 @@ def get_or_create_viewer():
         if _global_viewer is not None and _global_viewer.running:
             return _global_viewer
 
+        # Clear the old viewer reference
+        _global_viewer = None
+
         # If there's a thread that's still alive, wait for it to finish
         if _viewer_thread is not None and _viewer_thread.is_alive():
             print("⏳ Waiting for previous viewer instance to terminate...")
             _viewer_thread.join(timeout=5.0)
             if _viewer_thread.is_alive():
                 print("⚠️  Previous viewer did not terminate cleanly")
-                # Force create a new viewer anyway, might cause issues
+                return None  # Can't create new viewer while old one is still running
             else:
                 print("✓ Previous viewer terminated")
-                # Give OpenXR runtime a moment to clean up
-                time.sleep(0.5)
+                # Give OpenXR runtime time to fully clean up
+                print("⏳ Waiting for OpenXR cleanup (2 seconds)...")
+                time.sleep(2.0)
 
         # Create new viewer instance
         print("🔨 Creating new VR viewer instance...")
@@ -1470,7 +1473,15 @@ def get_or_create_viewer():
         _viewer_thread.start()
 
         # Give it a moment to initialize
-        time.sleep(1.0)  # Increased from 0.5 to 1.0 for better initialization
+        time.sleep(1.0)
+
+        # Check if viewer started successfully
+        if not _global_viewer.running:
+            # Viewer failed to start, wait for thread to finish
+            _viewer_thread.join(timeout=3.0)
+            print("❌ Viewer failed to start")
+            _global_viewer = None
+            return None
 
         return _global_viewer
 
@@ -1526,6 +1537,12 @@ def launch_native_viewer(media_path, stereo_format="sbs", swap_eyes=False, proje
 
     try:
         viewer = get_or_create_viewer()
+
+        if viewer is None:
+            print("❌ Failed to create or get viewer instance")
+            print("💡 The previous viewer may still be cleaning up.")
+            print("   Please wait a few seconds and try again.")
+            return False
 
         # Queue the new media
         viewer.update_media(media_path, stereo_format, swap_eyes, projection_type, screen_size, screen_distance, is_video, loop_video)
