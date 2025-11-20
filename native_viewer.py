@@ -68,7 +68,9 @@ class GLFWVisibleContextProvider(GLFWOffscreenContextProvider):
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._window:
             glfw.destroy_window(self._window)
-        glfw.terminate()
+            self._window = None
+        # Don't call glfw.terminate() here as it affects the global GLFW state
+        # and can interfere with OpenXR cleanup and future sessions
 
 
 class StereoFormat:
@@ -632,9 +634,14 @@ class PersistentNativeViewer:
                 self.setup_help_overlay_geometry()
                 self.create_help_overlay()
                 self.help_overlay_initialized = True
-                print("✓ Help overlay initialized in control window context")
+                print(f"✓ Help overlay initialized in control window context")
+                print(f"  - Texture ID: {self.help_texture_id}")
+                print(f"  - Shader program: {self.help_shader_program}")
+                print(f"  - VAO: {self.help_vao}")
             except Exception as e:
                 print(f"⚠️  Failed to initialize help overlay: {e}")
+                import traceback
+                traceback.print_exc()
                 self.help_overlay_initialized = True  # Don't try again
 
         # Clear to dark gray background
@@ -643,6 +650,7 @@ class PersistentNativeViewer:
 
         # If help is enabled, render the help overlay
         if self.show_help and self.help_texture_id is not None:
+            print(f"[DEBUG] Rendering help overlay (texture: {self.help_texture_id}, shader: {self.help_shader_program}, vao: {self.help_vao})")
             # Disable depth test for 2D overlay
             GL.glDisable(GL.GL_DEPTH_TEST)
 
@@ -1412,12 +1420,15 @@ def get_or_create_viewer():
         # If there's a thread that's still alive, wait for it to finish
         if _viewer_thread is not None and _viewer_thread.is_alive():
             print("⏳ Waiting for previous viewer instance to terminate...")
-            _viewer_thread.join(timeout=5.0)
+            _viewer_thread.join(timeout=10.0)  # Increased timeout to 10 seconds
             if _viewer_thread.is_alive():
                 print("⚠️  Previous viewer did not terminate cleanly")
                 # Force create a new viewer anyway, might cause issues
             else:
                 print("✓ Previous viewer terminated")
+                # Give OpenXR runtime time to fully clean up
+                print("⏳ Waiting for OpenXR runtime to clean up...")
+                time.sleep(2.0)
 
         # Create new viewer instance
         print("🔨 Creating new VR viewer instance...")
