@@ -53,20 +53,21 @@ class GLFWVisibleContextProvider(GLFWOffscreenContextProvider):
         glfw.window_hint(glfw.FLOATING, True)  # Keep on top
 
         # Create a small visible window for controls
-        self.window = glfw.create_window(400, 300, "VR Video Controls", None, None)
-        if not self.window:
+        # Use _window to match parent class attribute
+        self._window = glfw.create_window(400, 300, "VR Video Controls", None, None)
+        if not self._window:
             glfw.terminate()
             raise RuntimeError("Failed to create GLFW window")
 
         # Make context current
-        glfw.make_context_current(self.window)
+        glfw.make_context_current(self._window)
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.window:
-            glfw.destroy_window(self.window)
+        if self._window:
+            glfw.destroy_window(self._window)
         glfw.terminate()
 
 
@@ -845,7 +846,7 @@ class PersistentNativeViewer:
             ) as context:
 
                 # Get GLFW window and set up keyboard callback
-                self.glfw_window = context_provider.window
+                self.glfw_window = context_provider._window
                 glfw.set_key_callback(self.glfw_window, self.keyboard_callback)
                 print("✓ Keyboard controls enabled (focus the control window to use keys)")
 
