@@ -20,10 +20,12 @@ try:
     from xr.utils.gl.glfw_util import GLFWOffscreenContextProvider
     from OpenGL import GL
     from PIL import Image
+    import cv2  # For video playback
+    import glfw  # For keyboard input
     PYOPENXR_AVAILABLE = True
 except ImportError:
     PYOPENXR_AVAILABLE = False
-    print("PyOpenXR not available. Install with: pip install pyopenxr PyOpenGL pillow")
+    print("PyOpenXR not available. Install with: pip install pyopenxr PyOpenGL pillow opencv-python")
 
 
 class StereoFormat:
@@ -35,15 +37,17 @@ class StereoFormat:
     SEPARATE = "separate"
 
 
-class ImageUpdate:
-    """Represents an image update for the viewer"""
-    def __init__(self, image_path, stereo_format, swap_eyes, projection_type="flat", screen_size=3.0, screen_distance=3.0):
-        self.image_path = image_path
+class MediaUpdate:
+    """Represents a media (image or video) update for the viewer"""
+    def __init__(self, media_path, stereo_format, swap_eyes, projection_type="flat", screen_size=3.0, screen_distance=3.0, is_video=False, loop_video=True):
+        self.media_path = media_path
         self.stereo_format = stereo_format
         self.swap_eyes = swap_eyes
         self.projection_type = projection_type
         self.screen_size = screen_size
         self.screen_distance = screen_distance
+        self.is_video = is_video
+        self.loop_video = loop_video
 
 
 class PersistentNativeViewer:
@@ -66,9 +70,9 @@ class PersistentNativeViewer:
         self.sphere_vertices = None
         self.sphere_indices = None
 
-        # Image update queue
-        self.image_queue = queue.Queue()
-        self.current_image = None
+        # Media update queue
+        self.media_queue = queue.Queue()
+        self.current_media = None
         self.current_format = StereoFormat.SIDE_BY_SIDE
         self.current_swap = False
         self.current_projection = "flat"
@@ -76,10 +80,22 @@ class PersistentNativeViewer:
         self.current_screen_distance = 3.0
         self.current_aspect_ratio = 16.0 / 9.0  # Default aspect ratio
 
+        # Video playback state
+        self.is_video = False
+        self.video_capture = None
+        self.video_playing = True
+        self.video_loop = True
+        self.video_fps = 30.0
+        self.video_frame_time = 1.0 / 30.0
+        self.last_frame_time = 0.0
+        self.current_frame_number = 0
+        self.total_frames = 0
+
         # Viewer state
         self.running = False
         self.should_stop = False
         self.geometry_needs_update = False
+        self.glfw_window = None  # Store GLFW window for keyboard input
 
     def create_sphere_mesh(self, radius=100.0, segments=60, rings=40):
         """Create sphere geometry for 360° viewing"""
@@ -352,10 +368,148 @@ class PersistentNativeViewer:
         GL.glDeleteShader(vertex_shader)
         GL.glDeleteShader(fragment_shader)
 
+    def load_video(self, video_path):
+        """Load video file and initialize video capture"""
+        try:
+            print(f"   Loading video from: {video_path}")
+
+            # Close previous video if exists
+            if self.video_capture is not None:
+                self.video_capture.release()
+
+            # Open video file
+            self.video_capture = cv2.VideoCapture(video_path)
+
+            if not self.video_capture.isOpened():
+                raise RuntimeError(f"Could not open video file: {video_path}")
+
+            # Get video properties
+            self.video_fps = self.video_capture.get(cv2.CAP_PROP_FPS)
+            self.total_frames = int(self.video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            width = int(self.video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+            if self.video_fps <= 0:
+                self.video_fps = 30.0  # Default to 30fps if unknown
+
+            self.video_frame_time = 1.0 / self.video_fps
+            self.current_frame_number = 0
+            self.last_frame_time = time.time()
+            self.is_video = True
+
+            print(f"   Video loaded: {width}x{height}, {self.video_fps} fps, {self.total_frames} frames")
+
+            # Load first frame
+            ret, frame = self.video_capture.read()
+            if ret:
+                self.update_texture_from_frame(frame)
+
+        except Exception as e:
+            print(f"   ✗ Error loading video: {e}")
+            raise
+
+    def update_texture_from_frame(self, frame):
+        """Update OpenGL texture with a video frame"""
+        try:
+            # OpenCV uses BGR, convert to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            height, width = frame_rgb.shape[:2]
+
+            # Calculate aspect ratio from actual frame
+            if self.current_format == StereoFormat.SIDE_BY_SIDE:
+                aspect_ratio = (width / 2.0) / height
+            elif self.current_format == StereoFormat.OVER_UNDER:
+                aspect_ratio = width / (height / 2.0)
+            else:
+                aspect_ratio = width / height
+
+            # Check if aspect ratio changed
+            if abs(self.current_aspect_ratio - aspect_ratio) > 0.01:
+                self.current_aspect_ratio = aspect_ratio
+                if self.current_projection in ["flat", "curved"]:
+                    self.geometry_needs_update = True
+
+            if self.texture_id is None:
+                self.texture_id = GL.glGenTextures(1)
+
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_id)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+
+            GL.glTexImage2D(
+                GL.GL_TEXTURE_2D, 0, GL.GL_RGB,
+                width, height, 0,
+                GL.GL_RGB, GL.GL_UNSIGNED_BYTE, frame_rgb
+            )
+
+        except Exception as e:
+            print(f"   ✗ Error updating texture from frame: {e}")
+
+    def get_next_video_frame(self):
+        """Get next frame from video, handling looping"""
+        if not self.is_video or self.video_capture is None:
+            return False
+
+        ret, frame = self.video_capture.read()
+
+        if ret:
+            self.update_texture_from_frame(frame)
+            self.current_frame_number += 1
+            return True
+        else:
+            # End of video
+            if self.video_loop:
+                # Loop back to start
+                self.video_capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                self.current_frame_number = 0
+                ret, frame = self.video_capture.read()
+                if ret:
+                    self.update_texture_from_frame(frame)
+                    return True
+            return False
+
+    def seek_video(self, frames):
+        """Seek video by number of frames (positive or negative)"""
+        if not self.is_video or self.video_capture is None:
+            return
+
+        new_frame = max(0, min(self.current_frame_number + frames, self.total_frames - 1))
+        self.video_capture.set(cv2.CAP_PROP_POS_FRAMES, new_frame)
+        self.current_frame_number = new_frame
+
+        # Read and display the frame
+        ret, frame = self.video_capture.read()
+        if ret:
+            self.update_texture_from_frame(frame)
+
+        print(f"   Seeked to frame {self.current_frame_number}/{self.total_frames}")
+
+    def restart_video(self):
+        """Restart video from beginning"""
+        if not self.is_video or self.video_capture is None:
+            return
+
+        self.video_capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        self.current_frame_number = 0
+        ret, frame = self.video_capture.read()
+        if ret:
+            self.update_texture_from_frame(frame)
+        print("   Video restarted")
+
     def load_texture(self, image_path):
         """Load or update image as OpenGL texture"""
         try:
             print(f"   Loading texture from: {image_path}")
+
+            # Mark as static image (not video)
+            self.is_video = False
+            if self.video_capture is not None:
+                self.video_capture.release()
+                self.video_capture = None
+
             img = Image.open(image_path)
             img = img.convert('RGB')
             img_data = np.array(img, dtype=np.uint8)
@@ -446,11 +600,46 @@ class PersistentNativeViewer:
 
         GL.glBindVertexArray(0)
 
+    def keyboard_callback(self, window, key, scancode, action, mods):
+        """Handle keyboard input for video controls"""
+        if action != glfw.PRESS and action != glfw.REPEAT:
+            return
+
+        if key == glfw.KEY_SPACE:
+            # Toggle play/pause
+            self.video_playing = not self.video_playing
+            status = "Playing" if self.video_playing else "Paused"
+            print(f"   Video {status}")
+        elif key == glfw.KEY_R:
+            # Restart video
+            self.restart_video()
+        elif key == glfw.KEY_LEFT:
+            # Seek backward (1 second)
+            frames_to_seek = -int(self.video_fps)
+            self.seek_video(frames_to_seek)
+        elif key == glfw.KEY_RIGHT:
+            # Seek forward (1 second)
+            frames_to_seek = int(self.video_fps)
+            self.seek_video(frames_to_seek)
+        elif key == glfw.KEY_DOWN:
+            # Seek backward (5 seconds)
+            frames_to_seek = -int(self.video_fps * 5)
+            self.seek_video(frames_to_seek)
+        elif key == glfw.KEY_UP:
+            # Seek forward (5 seconds)
+            frames_to_seek = int(self.video_fps * 5)
+            self.seek_video(frames_to_seek)
+        elif key == glfw.KEY_L:
+            # Toggle loop
+            self.video_loop = not self.video_loop
+            status = "enabled" if self.video_loop else "disabled"
+            print(f"   Video loop {status}")
+
     def check_for_updates(self):
-        """Check if there's a new image to display"""
+        """Check if there's a new media (image or video) to display"""
         try:
-            while not self.image_queue.empty():
-                update = self.image_queue.get_nowait()
+            while not self.media_queue.empty():
+                update = self.media_queue.get_nowait()
 
                 # Check if projection type or size changed (requires geometry rebuild)
                 if (update.projection_type != self.current_projection or
@@ -462,14 +651,22 @@ class PersistentNativeViewer:
                     self.current_screen_distance = update.screen_distance
                     self.geometry_needs_update = True
 
-                self.current_image = update.image_path
+                self.current_media = update.media_path
                 self.current_format = update.stereo_format
                 self.current_swap = update.swap_eyes
-                print(f"\n📷 Updating VR view with new image: {update.image_path}")
+                self.video_loop = update.loop_video
+
+                media_type = "video" if update.is_video else "image"
+                print(f"\n📷 Updating VR view with new {media_type}: {update.media_path}")
                 print(f"   Format: {update.stereo_format}, Swap: {update.swap_eyes}")
                 print(f"   Projection: {update.projection_type}, Size: {update.screen_size}m, Distance: {update.screen_distance}m")
-                # Reload texture with new image
-                self.load_texture(self.current_image)
+
+                # Load video or image
+                if update.is_video:
+                    self.load_video(self.current_media)
+                    self.video_playing = True
+                else:
+                    self.load_texture(self.current_media)
         except queue.Empty:
             pass
 
@@ -484,8 +681,16 @@ class PersistentNativeViewer:
         print("PUT ON YOUR HEADSET NOW!")
         print("\nControls:")
         print("  - Look around naturally with your headset")
-        print("  - Run the workflow again to update the image")
-        print("  - Close ComfyUI to stop the viewer")
+        print("  - Run the workflow again to update the media")
+        print("\nVideo Controls (keyboard):")
+        print("  SPACE    - Play/Pause")
+        print("  R        - Restart video")
+        print("  LEFT     - Seek backward 1 second")
+        print("  RIGHT    - Seek forward 1 second")
+        print("  DOWN     - Seek backward 5 seconds")
+        print("  UP       - Seek forward 5 seconds")
+        print("  L        - Toggle loop")
+        print("\n  - Close ComfyUI to stop the viewer")
         print("="*60 + "\n")
 
         # Map format strings to integers for shader
@@ -506,13 +711,22 @@ class PersistentNativeViewer:
                 context_provider=GLFWOffscreenContextProvider(),
             ) as context:
 
+                # Get GLFW window and set up keyboard callback
+                if hasattr(context.graphics_provider, 'window'):
+                    self.glfw_window = context.graphics_provider.window
+                    glfw.set_key_callback(self.glfw_window, self.keyboard_callback)
+                    print("✓ Keyboard controls enabled")
+
                 # Initialize OpenGL resources
                 self.create_shaders()
                 self.setup_geometry()
 
-                # Load initial image if available
-                if self.current_image:
-                    self.load_texture(self.current_image)
+                # Load initial media if available
+                if self.current_media:
+                    if self.is_video:
+                        self.load_video(self.current_media)
+                    else:
+                        self.load_texture(self.current_media)
 
                 # Enable depth testing
                 GL.glEnable(GL.GL_DEPTH_TEST)
@@ -535,7 +749,7 @@ class PersistentNativeViewer:
                         print("\n🛑 Stopping VR viewer...")
                         break
 
-                    # Check for image updates every few frames
+                    # Check for media updates every few frames
                     if frame_count % 30 == 0:
                         self.check_for_updates()
 
@@ -545,6 +759,20 @@ class PersistentNativeViewer:
                             self.setup_geometry()
                             self.geometry_needs_update = False
                             print("✓ Geometry updated!")
+
+                    # Poll keyboard events
+                    if self.glfw_window:
+                        glfw.poll_events()
+
+                    # Advance video frame if playing
+                    if self.is_video and self.video_playing:
+                        current_time = time.time()
+                        elapsed = current_time - self.last_frame_time
+
+                        # Check if it's time for next frame
+                        if elapsed >= self.video_frame_time:
+                            self.get_next_video_frame()
+                            self.last_frame_time = current_time
 
                     format_int = format_map.get(self.current_format, 0)
 
@@ -630,6 +858,10 @@ class PersistentNativeViewer:
             import traceback
             traceback.print_exc()
         finally:
+            # Cleanup video capture
+            if self.video_capture is not None:
+                self.video_capture.release()
+
             # Cleanup OpenGL resources
             # Wrap in try-except as OpenGL context may already be destroyed
             try:
@@ -654,10 +886,10 @@ class PersistentNativeViewer:
         """Stop the viewer"""
         self.should_stop = True
 
-    def update_image(self, image_path, stereo_format, swap_eyes, projection_type="flat", screen_size=3.0, screen_distance=3.0):
-        """Queue a new image for display"""
-        update = ImageUpdate(image_path, stereo_format, swap_eyes, projection_type, screen_size, screen_distance)
-        self.image_queue.put(update)
+    def update_media(self, media_path, stereo_format, swap_eyes, projection_type="flat", screen_size=3.0, screen_distance=3.0, is_video=False, loop_video=True):
+        """Queue a new media (image or video) for display"""
+        update = MediaUpdate(media_path, stereo_format, swap_eyes, projection_type, screen_size, screen_distance, is_video, loop_video)
+        self.media_queue.put(update)
 
 
 # Global persistent viewer instance
@@ -701,19 +933,21 @@ def check_openxr_available():
         return False, f"OpenXR runtime not available: {str(e)}"
 
 
-def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False, projection_type="flat", screen_size=3.0, screen_distance=3.0):
+def launch_native_viewer(media_path, stereo_format="sbs", swap_eyes=False, projection_type="flat", screen_size=3.0, screen_distance=3.0, is_video=False, loop_video=True):
     """
-    Launch or update the native viewer with a new image.
-    If viewer is already running, updates it with the new image.
+    Launch or update the native viewer with a new image or video.
+    If viewer is already running, updates it with the new media.
     Otherwise, starts a new viewer.
 
     Args:
-        image_path: Path to stereo image
-        stereo_format: Stereo format (sbs, ou, anaglyph, mono)
+        media_path: Path to stereo image or video
+        stereo_format: Stereo format (sbs, ou, mono)
         swap_eyes: Whether to swap eyes
         projection_type: Projection type (flat, curved, dome180, sphere360)
         screen_size: Screen size in meters (for flat/curved/dome)
         screen_distance: Distance from viewer in meters
+        is_video: Whether the media is a video file
+        loop_video: Whether to loop video playback
 
     Returns:
         bool: True if successful, False if error
@@ -723,7 +957,7 @@ def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False, proje
     if not available:
         print(f"ERROR: {message}")
         print("\nTo use native VR viewer:")
-        print("1. Install PyOpenXR: pip install pyopenxr PyOpenGL pillow")
+        print("1. Install PyOpenXR: pip install pyopenxr PyOpenGL pillow opencv-python")
         print("2. Install SteamVR or Oculus runtime")
         print("3. Make sure your VR headset is connected")
         return False
@@ -731,17 +965,19 @@ def launch_native_viewer(image_path, stereo_format="sbs", swap_eyes=False, proje
     try:
         viewer = get_or_create_viewer()
 
-        # Queue the new image
-        viewer.update_image(image_path, stereo_format, swap_eyes, projection_type, screen_size, screen_distance)
+        # Queue the new media
+        viewer.update_media(media_path, stereo_format, swap_eyes, projection_type, screen_size, screen_distance, is_video, loop_video)
 
-        # If this is the first image, set it as current
-        if viewer.current_image is None:
-            viewer.current_image = image_path
+        # If this is the first media, set it as current
+        if viewer.current_media is None:
+            viewer.current_media = media_path
             viewer.current_format = stereo_format
             viewer.current_swap = swap_eyes
             viewer.current_projection = projection_type
             viewer.current_screen_size = screen_size
             viewer.current_screen_distance = screen_distance
+            viewer.is_video = is_video
+            viewer.video_loop = loop_video
 
         return True
 
