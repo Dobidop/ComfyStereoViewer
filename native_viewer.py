@@ -1038,12 +1038,28 @@ def get_or_create_viewer():
     global _global_viewer, _viewer_thread
 
     with _viewer_lock:
-        if _global_viewer is None or not _global_viewer.running:
-            _global_viewer = PersistentNativeViewer()
-            _viewer_thread = threading.Thread(target=_global_viewer.run, daemon=True)
-            _viewer_thread.start()
-            # Give it a moment to initialize
-            time.sleep(0.5)
+        # If there's a viewer that's still running, return it
+        if _global_viewer is not None and _global_viewer.running:
+            return _global_viewer
+
+        # If there's a thread that's still alive, wait for it to finish
+        if _viewer_thread is not None and _viewer_thread.is_alive():
+            print("⏳ Waiting for previous viewer instance to terminate...")
+            _viewer_thread.join(timeout=5.0)
+            if _viewer_thread.is_alive():
+                print("⚠️  Previous viewer did not terminate cleanly")
+                # Force create a new viewer anyway, might cause issues
+            else:
+                print("✓ Previous viewer terminated")
+
+        # Create new viewer instance
+        print("🔨 Creating new VR viewer instance...")
+        _global_viewer = PersistentNativeViewer()
+        _viewer_thread = threading.Thread(target=_global_viewer.run, daemon=True)
+        _viewer_thread.start()
+
+        # Give it a moment to initialize
+        time.sleep(1.0)  # Increased from 0.5 to 1.0 for better initialization
 
         return _global_viewer
 
