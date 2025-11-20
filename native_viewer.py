@@ -5,6 +5,7 @@ Persistent viewer with image update queue
 """
 
 import sys
+import os
 import math
 import ctypes  # FIXED: Added missing import
 import threading
@@ -22,10 +23,51 @@ try:
     from PIL import Image
     import cv2  # For video playback
     import glfw  # For keyboard input
+    import pygame  # For audio playback
+    import subprocess  # For ffmpeg audio extraction
+    import tempfile
     PYOPENXR_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     PYOPENXR_AVAILABLE = False
-    print("PyOpenXR not available. Install with: pip install pyopenxr PyOpenGL pillow opencv-python")
+    print(f"PyOpenXR not available. Install with: pip install pyopenxr PyOpenGL pillow opencv-python pygame")
+    print(f"Error: {e}")
+
+
+class GLFWVisibleContextProvider(GLFWOffscreenContextProvider):
+    """
+    GLFW context provider that creates a VISIBLE window for keyboard input.
+    Extends the offscreen provider but makes the window visible.
+    """
+    def __init__(self):
+        # Initialize GLFW if not already done
+        if not glfw.init():
+            raise RuntimeError("Failed to initialize GLFW")
+
+        # Set window hints
+        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
+        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+        glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, True)
+        glfw.window_hint(glfw.VISIBLE, True)  # Make window VISIBLE
+        glfw.window_hint(glfw.RESIZABLE, False)
+        glfw.window_hint(glfw.FLOATING, True)  # Keep on top
+
+        # Create a small visible window for controls
+        self.window = glfw.create_window(400, 300, "VR Video Controls", None, None)
+        if not self.window:
+            glfw.terminate()
+            raise RuntimeError("Failed to create GLFW window")
+
+        # Make context current
+        glfw.make_context_current(self.window)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.window:
+            glfw.destroy_window(self.window)
+        glfw.terminate()
 
 
 class StereoFormat:
@@ -90,6 +132,11 @@ class PersistentNativeViewer:
         self.last_frame_time = 0.0
         self.current_frame_number = 0
         self.total_frames = 0
+
+        # Audio playback state
+        self.audio_temp_file = None
+        self.audio_initialized = False
+        self.audio_paused = False
 
         # Viewer state
         self.running = False
@@ -399,6 +446,9 @@ class PersistentNativeViewer:
 
             print(f"   Video loaded: {width}x{height}, {self.video_fps} fps, {self.total_frames} frames")
 
+            # Load audio track
+            self.load_audio(video_path)
+
             # Load first frame
             ret, frame = self.video_capture.read()
             if ret:
@@ -497,7 +547,82 @@ class PersistentNativeViewer:
         ret, frame = self.video_capture.read()
         if ret:
             self.update_texture_from_frame(frame)
+
+        # Restart audio too
+        if self.audio_initialized:
+            pygame.mixer.music.rewind()
+            if self.video_playing:
+                pygame.mixer.music.unpause()
+
         print("   Video restarted")
+
+    def load_audio(self, video_path):
+        """Extract and load audio from video file using pygame"""
+        try:
+            # Initialize pygame mixer if not done
+            if not self.audio_initialized:
+                pygame.mixer.init()
+                self.audio_initialized = True
+
+            # Clean up previous audio temp file
+            if self.audio_temp_file and os.path.exists(self.audio_temp_file):
+                try:
+                    os.remove(self.audio_temp_file)
+                except:
+                    pass
+
+            # Create temporary file for audio
+            temp_audio = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+            self.audio_temp_file = temp_audio.name
+            temp_audio.close()
+
+            # Try to extract audio using ffmpeg (if available)
+            try:
+                subprocess.run([
+                    'ffmpeg', '-i', video_path,
+                    '-vn',  # No video
+                    '-acodec', 'libmp3lame',  # MP3 codec
+                    '-y',  # Overwrite
+                    self.audio_temp_file
+                ], capture_output=True, check=True, timeout=30)
+
+                # Load audio with pygame
+                pygame.mixer.music.load(self.audio_temp_file)
+                pygame.mixer.music.play(loops=-1 if self.video_loop else 0)
+                print("   ✓ Audio loaded and playing")
+
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                print("   ⚠️  Could not extract audio (ffmpeg not found or no audio track)")
+                self.audio_temp_file = None
+
+        except Exception as e:
+            print(f"   ⚠️  Audio loading failed: {e}")
+            self.audio_temp_file = None
+
+    def toggle_audio_playback(self):
+        """Toggle audio play/pause"""
+        if not self.audio_initialized:
+            return
+
+        if self.audio_paused:
+            pygame.mixer.music.unpause()
+            self.audio_paused = False
+        else:
+            pygame.mixer.music.pause()
+            self.audio_paused = True
+
+    def stop_audio(self):
+        """Stop audio playback"""
+        if self.audio_initialized:
+            pygame.mixer.music.stop()
+
+        # Clean up temp audio file
+        if self.audio_temp_file and os.path.exists(self.audio_temp_file):
+            try:
+                os.remove(self.audio_temp_file)
+            except:
+                pass
+            self.audio_temp_file = None
 
     def load_texture(self, image_path):
         """Load or update image as OpenGL texture"""
@@ -509,6 +634,9 @@ class PersistentNativeViewer:
             if self.video_capture is not None:
                 self.video_capture.release()
                 self.video_capture = None
+
+            # Stop audio when switching to image
+            self.stop_audio()
 
             img = Image.open(image_path)
             img = img.convert('RGB')
@@ -608,6 +736,8 @@ class PersistentNativeViewer:
         if key == glfw.KEY_SPACE:
             # Toggle play/pause
             self.video_playing = not self.video_playing
+            # Also toggle audio
+            self.toggle_audio_playback()
             status = "Playing" if self.video_playing else "Paused"
             print(f"   Video {status}")
         elif key == glfw.KEY_R:
@@ -702,8 +832,8 @@ class PersistentNativeViewer:
         }
 
         try:
-            # Create context provider first so we can access the window
-            context_provider = GLFWOffscreenContextProvider()
+            # Create visible context provider for keyboard input
+            context_provider = GLFWVisibleContextProvider()
 
             with ContextObject(
                 instance_create_info=xr.InstanceCreateInfo(
@@ -715,10 +845,9 @@ class PersistentNativeViewer:
             ) as context:
 
                 # Get GLFW window and set up keyboard callback
-                if hasattr(context_provider, 'window'):
-                    self.glfw_window = context_provider.window
-                    glfw.set_key_callback(self.glfw_window, self.keyboard_callback)
-                    print("✓ Keyboard controls enabled")
+                self.glfw_window = context_provider.window
+                glfw.set_key_callback(self.glfw_window, self.keyboard_callback)
+                print("✓ Keyboard controls enabled (focus the control window to use keys)")
 
                 # Initialize OpenGL resources
                 self.create_shaders()
@@ -864,6 +993,9 @@ class PersistentNativeViewer:
             # Cleanup video capture
             if self.video_capture is not None:
                 self.video_capture.release()
+
+            # Cleanup audio
+            self.stop_audio()
 
             # Cleanup OpenGL resources
             # Wrap in try-except as OpenGL context may already be destroyed
