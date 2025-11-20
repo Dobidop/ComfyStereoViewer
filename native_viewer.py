@@ -627,6 +627,10 @@ class PersistentNativeViewer:
         # Make the GLFW window's context current
         glfw.make_context_current(self.glfw_window)
 
+        # Set viewport to match window size
+        width, height = glfw.get_framebuffer_size(self.glfw_window)
+        GL.glViewport(0, 0, width, height)
+
         # Initialize help overlay resources on first use (must be in GLFW context)
         if not self.help_overlay_initialized:
             try:
@@ -638,6 +642,7 @@ class PersistentNativeViewer:
                 print(f"  - Texture ID: {self.help_texture_id}")
                 print(f"  - Shader program: {self.help_shader_program}")
                 print(f"  - VAO: {self.help_vao}")
+                print(f"  - Window size: {width}x{height}")
             except Exception as e:
                 print(f"⚠️  Failed to initialize help overlay: {e}")
                 import traceback
@@ -650,7 +655,6 @@ class PersistentNativeViewer:
 
         # If help is enabled, render the help overlay
         if self.show_help and self.help_texture_id is not None:
-            print(f"[DEBUG] Rendering help overlay (texture: {self.help_texture_id}, shader: {self.help_shader_program}, vao: {self.help_vao})")
             # Disable depth test for 2D overlay
             GL.glDisable(GL.GL_DEPTH_TEST)
 
@@ -1420,15 +1424,14 @@ def get_or_create_viewer():
         # If there's a thread that's still alive, wait for it to finish
         if _viewer_thread is not None and _viewer_thread.is_alive():
             print("⏳ Waiting for previous viewer instance to terminate...")
-            _viewer_thread.join(timeout=10.0)  # Increased timeout to 10 seconds
+            _viewer_thread.join(timeout=5.0)
             if _viewer_thread.is_alive():
                 print("⚠️  Previous viewer did not terminate cleanly")
                 # Force create a new viewer anyway, might cause issues
             else:
                 print("✓ Previous viewer terminated")
-                # Give OpenXR runtime time to fully clean up
-                print("⏳ Waiting for OpenXR runtime to clean up...")
-                time.sleep(2.0)
+                # Give OpenXR runtime a moment to clean up
+                time.sleep(0.5)
 
         # Create new viewer instance
         print("🔨 Creating new VR viewer instance...")
