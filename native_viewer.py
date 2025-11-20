@@ -149,6 +149,13 @@ class PersistentNativeViewer:
         self.horizontal_offset = 0.0
         self.vertical_offset_adjustment = 0.0  # Additional offset beyond auto-centering
 
+        # Help overlay
+        self.show_help = False
+        self.help_texture_id = None
+        self.help_shader_program = None
+        self.help_vao = None
+        self.help_vbo = None
+
     def create_sphere_mesh(self, radius=100.0, segments=60, rings=40):
         """Create sphere geometry for 360° viewing"""
         vertices = []
@@ -437,6 +444,218 @@ class PersistentNativeViewer:
 
         GL.glDeleteShader(vertex_shader)
         GL.glDeleteShader(fragment_shader)
+
+    def create_help_overlay(self):
+        """Create a texture with help text to display in the control window"""
+        from PIL import Image, ImageDraw, ImageFont
+
+        # Create image for help text
+        width, height = 400, 300
+        img = Image.new('RGBA', (width, height), (20, 20, 20, 230))  # Semi-transparent dark background
+        draw = ImageDraw.Draw(img)
+
+        # Try to use a system font, fallback to default
+        try:
+            font = ImageFont.truetype("arial.ttf", 11)
+            font_bold = ImageFont.truetype("arialbd.ttf", 12)
+        except:
+            font = ImageFont.load_default()
+            font_bold = font
+
+        # Draw help text
+        y = 10
+        line_height = 14
+
+        # Title
+        draw.text((10, y), "KEYBOARD CONTROLS", fill=(255, 255, 100), font=font_bold)
+        y += line_height + 5
+
+        # Video playback
+        draw.text((10, y), "VIDEO:", fill=(100, 200, 255), font=font_bold)
+        y += line_height
+        draw.text((10, y), "  SPACE - Play/Pause", fill=(220, 220, 220), font=font)
+        y += line_height
+        draw.text((10, y), "  R - Restart    L - Toggle loop", fill=(220, 220, 220), font=font)
+        y += line_height
+        draw.text((10, y), "  Arrows - Seek (1s/5s)", fill=(220, 220, 220), font=font)
+        y += line_height + 3
+
+        # Viewer adjustments
+        draw.text((10, y), "VIEWER:", fill=(100, 200, 255), font=font_bold)
+        y += line_height
+        draw.text((10, y), "  P - Cycle projection", fill=(220, 220, 220), font=font)
+        y += line_height
+        draw.text((10, y), "  PgUp/PgDn - Screen distance", fill=(220, 220, 220), font=font)
+        y += line_height
+        draw.text((10, y), "  +/- - Screen size", fill=(220, 220, 220), font=font)
+        y += line_height
+        draw.text((10, y), "  Shift+S - Stereo format", fill=(220, 220, 220), font=font)
+        y += line_height
+        draw.text((10, y), "  E - Swap eyes", fill=(220, 220, 220), font=font)
+        y += line_height + 3
+
+        # Alignment
+        draw.text((10, y), "ALIGN:", fill=(100, 200, 255), font=font_bold)
+        y += line_height
+        draw.text((10, y), "  W/A/S/D - Move screen", fill=(220, 220, 220), font=font)
+        y += line_height
+        draw.text((10, y), "  0 - Reset to center", fill=(220, 220, 220), font=font)
+        y += line_height + 3
+
+        # Other
+        draw.text((10, y), "OTHER:", fill=(100, 200, 255), font=font_bold)
+        y += line_height
+        draw.text((10, y), "  H - Toggle this help", fill=(220, 220, 220), font=font)
+        y += line_height
+        draw.text((10, y), "  Q/ESC - Quit viewer", fill=(220, 220, 220), font=font)
+
+        # Convert to OpenGL texture
+        img_data = np.array(img)
+
+        if self.help_texture_id is None:
+            self.help_texture_id = GL.glGenTextures(1)
+
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self.help_texture_id)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+
+        GL.glTexImage2D(
+            GL.GL_TEXTURE_2D, 0, GL.GL_RGBA,
+            width, height, 0,
+            GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, img_data
+        )
+
+    def create_help_shaders(self):
+        """Create simple 2D shaders for help overlay rendering in control window"""
+        vertex_shader_source = """
+        #version 330 core
+        layout(location = 0) in vec2 position;
+        layout(location = 1) in vec2 texCoord;
+
+        out vec2 TexCoord;
+
+        void main() {
+            gl_Position = vec4(position, 0.0, 1.0);
+            TexCoord = texCoord;
+        }
+        """
+
+        fragment_shader_source = """
+        #version 330 core
+        in vec2 TexCoord;
+        out vec4 FragColor;
+
+        uniform sampler2D helpTexture;
+
+        void main() {
+            FragColor = texture(helpTexture, TexCoord);
+        }
+        """
+
+        # Compile vertex shader
+        vertex_shader = GL.glCreateShader(GL.GL_VERTEX_SHADER)
+        GL.glShaderSource(vertex_shader, vertex_shader_source)
+        GL.glCompileShader(vertex_shader)
+
+        if not GL.glGetShaderiv(vertex_shader, GL.GL_COMPILE_STATUS):
+            error = GL.glGetShaderInfoLog(vertex_shader).decode()
+            raise RuntimeError(f"Help overlay vertex shader compilation failed: {error}")
+
+        # Compile fragment shader
+        fragment_shader = GL.glCreateShader(GL.GL_FRAGMENT_SHADER)
+        GL.glShaderSource(fragment_shader, fragment_shader_source)
+        GL.glCompileShader(fragment_shader)
+
+        if not GL.glGetShaderiv(fragment_shader, GL.GL_COMPILE_STATUS):
+            error = GL.glGetShaderInfoLog(fragment_shader).decode()
+            raise RuntimeError(f"Help overlay fragment shader compilation failed: {error}")
+
+        # Link shader program
+        self.help_shader_program = GL.glCreateProgram()
+        GL.glAttachShader(self.help_shader_program, vertex_shader)
+        GL.glAttachShader(self.help_shader_program, fragment_shader)
+        GL.glLinkProgram(self.help_shader_program)
+
+        if not GL.glGetProgramiv(self.help_shader_program, GL.GL_LINK_STATUS):
+            error = GL.glGetProgramInfoLog(self.help_shader_program).decode()
+            raise RuntimeError(f"Help overlay shader program linking failed: {error}")
+
+        GL.glDeleteShader(vertex_shader)
+        GL.glDeleteShader(fragment_shader)
+
+    def setup_help_overlay_geometry(self):
+        """Set up VAO and VBO for help overlay quad"""
+        # Full-screen quad in normalized device coordinates (-1 to 1)
+        # Position (x, y) and texture coordinates (u, v)
+        vertices = np.array([
+            # Positions   # TexCoords
+            -1.0, -1.0,   0.0, 1.0,  # Bottom-left
+             1.0, -1.0,   1.0, 1.0,  # Bottom-right
+             1.0,  1.0,   1.0, 0.0,  # Top-right
+            -1.0,  1.0,   0.0, 0.0,  # Top-left
+        ], dtype=np.float32)
+
+        # Create VAO
+        self.help_vao = GL.glGenVertexArrays(1)
+        GL.glBindVertexArray(self.help_vao)
+
+        # Create VBO
+        self.help_vbo = GL.glGenBuffers(1)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.help_vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL.GL_STATIC_DRAW)
+
+        # Position attribute
+        GL.glVertexAttribPointer(0, 2, GL.GL_FLOAT, GL.GL_FALSE, 4 * 4, None)
+        GL.glEnableVertexAttribArray(0)
+
+        # Texture coordinate attribute
+        GL.glVertexAttribPointer(1, 2, GL.GL_FLOAT, GL.GL_FALSE, 4 * 4, ctypes.c_void_p(2 * 4))
+        GL.glEnableVertexAttribArray(1)
+
+        GL.glBindVertexArray(0)
+
+    def render_control_window(self):
+        """Render the control window with optional help overlay"""
+        if not self.glfw_window:
+            return
+
+        # Make the GLFW window's context current
+        glfw.make_context_current(self.glfw_window)
+
+        # Clear to dark gray background
+        GL.glClearColor(0.1, 0.1, 0.1, 1.0)
+        GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+
+        # If help is enabled, render the help overlay
+        if self.show_help and self.help_texture_id is not None:
+            # Disable depth test for 2D overlay
+            GL.glDisable(GL.GL_DEPTH_TEST)
+
+            # Enable blending for transparency
+            GL.glEnable(GL.GL_BLEND)
+            GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+
+            # Use help shader
+            GL.glUseProgram(self.help_shader_program)
+
+            # Bind help texture
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self.help_texture_id)
+            GL.glUniform1i(GL.glGetUniformLocation(self.help_shader_program, "helpTexture"), 0)
+
+            # Draw full-screen quad
+            GL.glBindVertexArray(self.help_vao)
+            GL.glDrawArrays(GL.GL_TRIANGLE_FAN, 0, 4)
+            GL.glBindVertexArray(0)
+
+            # Restore state
+            GL.glDisable(GL.GL_BLEND)
+            GL.glEnable(GL.GL_DEPTH_TEST)
+
+        # Swap buffers to display
+        glfw.swap_buffers(self.glfw_window)
 
     def load_video(self, video_path):
         """Load video file and initialize video capture"""
@@ -805,25 +1024,25 @@ class PersistentNativeViewer:
             proj_names = {"flat": "Flat Screen", "curved": "Curved Screen", "dome180": "180° Dome", "sphere360": "360° Sphere"}
             print(f"   📐 Projection: {proj_names.get(self.current_projection, self.current_projection)}")
 
-        elif key == glfw.KEY_LEFT_BRACKET:  # [
-            # Decrease screen distance
-            self.current_screen_distance = max(1.0, self.current_screen_distance - 0.5)
-            self.geometry_needs_update = True
-            print(f"   📏 Screen distance: {self.current_screen_distance:.1f}m")
-
-        elif key == glfw.KEY_RIGHT_BRACKET:  # ]
+        elif key == glfw.KEY_PAGE_UP:
             # Increase screen distance
             self.current_screen_distance = min(10.0, self.current_screen_distance + 0.5)
             self.geometry_needs_update = True
             print(f"   📏 Screen distance: {self.current_screen_distance:.1f}m")
 
-        elif key == glfw.KEY_MINUS:
+        elif key == glfw.KEY_PAGE_DOWN:
+            # Decrease screen distance
+            self.current_screen_distance = max(1.0, self.current_screen_distance - 0.5)
+            self.geometry_needs_update = True
+            print(f"   📏 Screen distance: {self.current_screen_distance:.1f}m")
+
+        elif key == glfw.KEY_MINUS or key == glfw.KEY_KP_SUBTRACT:
             # Decrease screen size
             self.current_screen_size = max(1.0, self.current_screen_size - 0.5)
             self.geometry_needs_update = True
             print(f"   📺 Screen size: {self.current_screen_size:.1f}m")
 
-        elif key == glfw.KEY_EQUAL:  # = (same key as +)
+        elif key == glfw.KEY_EQUAL or key == glfw.KEY_KP_ADD:  # = (same key as +)
             # Increase screen size
             self.current_screen_size = min(10.0, self.current_screen_size + 0.5)
             self.geometry_needs_update = True
@@ -875,6 +1094,12 @@ class PersistentNativeViewer:
             self.horizontal_offset = 0.0
             self.geometry_needs_update = True
             print(f"   🔄 Reset alignment offsets to center")
+
+        elif key == glfw.KEY_H:
+            # Toggle help overlay
+            self.show_help = not self.show_help
+            status = "ON" if self.show_help else "OFF"
+            print(f"   ❓ Help overlay: {status}")
 
     def check_for_updates(self):
         """Check if there's a new media (image or video) to display"""
@@ -930,8 +1155,8 @@ class PersistentNativeViewer:
         print("  L          - Toggle loop")
         print("\n📐 VIEWER ADJUSTMENTS:")
         print("  P          - Cycle projection type")
-        print("  [ / ]      - Decrease/Increase screen distance")
-        print("  - / =      - Decrease/Increase screen size")
+        print("  PgUp/PgDn  - Increase/Decrease screen distance")
+        print("  + / -      - Increase/Decrease screen size")
         print("  Shift+S    - Cycle stereo format")
         print("  E          - Toggle swap eyes")
         print("\n🎯 ALIGNMENT:")
@@ -939,6 +1164,7 @@ class PersistentNativeViewer:
         print("  A / D      - Move screen left/right")
         print("  0          - Reset alignment to center")
         print("\n🚪 OTHER:")
+        print("  H          - Toggle help overlay in control window")
         print("  Q or ESC   - Quit viewer (ComfyUI keeps running)")
         print("="*60 + "\n")
 
@@ -971,6 +1197,11 @@ class PersistentNativeViewer:
                 # Initialize OpenGL resources
                 self.create_shaders()
                 self.setup_geometry()
+
+                # Initialize help overlay resources
+                self.create_help_shaders()
+                self.setup_help_overlay_geometry()
+                self.create_help_overlay()
 
                 # Load initial media if available
                 if self.current_media:
@@ -1011,9 +1242,10 @@ class PersistentNativeViewer:
                             self.geometry_needs_update = False
                             print("✓ Geometry updated!")
 
-                    # Poll keyboard events
+                    # Poll keyboard events and render control window
                     if self.glfw_window:
                         glfw.poll_events()
+                        self.render_control_window()
 
                     # Advance video frame if playing
                     if self.is_video and self.video_playing:
@@ -1121,14 +1353,22 @@ class PersistentNativeViewer:
             try:
                 if self.texture_id:
                     GL.glDeleteTextures([self.texture_id])
+                if self.help_texture_id:
+                    GL.glDeleteTextures([self.help_texture_id])
                 if self.vao:
                     GL.glDeleteVertexArrays(1, [self.vao])
                 if self.vbo:
                     GL.glDeleteBuffers(1, [self.vbo])
                 if self.ebo:
                     GL.glDeleteBuffers(1, [self.ebo])
+                if self.help_vao:
+                    GL.glDeleteVertexArrays(1, [self.help_vao])
+                if self.help_vbo:
+                    GL.glDeleteBuffers(1, [self.help_vbo])
                 if self.shader_program:
                     GL.glDeleteProgram(self.shader_program)
+                if self.help_shader_program:
+                    GL.glDeleteProgram(self.help_shader_program)
             except Exception as cleanup_error:
                 # Ignore cleanup errors (context likely already destroyed)
                 pass
