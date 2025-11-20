@@ -199,9 +199,9 @@ class PersistentNativeViewer:
         z = -distance
 
         # Vertical offset to center screen at comfortable viewing height
-        # Testing shows screen should be at origin for proper centering
-        # OpenXR view matrices already account for head-relative positioning
-        y_offset = 0.0
+        # Offset upward by half height to center the screen at eye level
+        # (currently top edge is at eye level, we want center at eye level)
+        y_offset = half_height
 
         # Four corners of the screen (centered vertically)
         positions = [
@@ -241,7 +241,8 @@ class PersistentNativeViewer:
         half_height = height / 2.0
 
         # Vertical offset to center screen at comfortable eye level
-        y_offset = 0.0  # Center at eye level (OpenXR tracking handles this)
+        # Offset upward by half height to center the screen at eye level
+        y_offset = half_height
 
         for v in range(segments_v + 1):
             y = -half_height + (v / segments_v) * height + y_offset
