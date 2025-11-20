@@ -145,6 +145,10 @@ class PersistentNativeViewer:
         self.geometry_needs_update = False
         self.glfw_window = None  # Store GLFW window for keyboard input
 
+        # Alignment offsets for real-time adjustment
+        self.horizontal_offset = 0.0
+        self.vertical_offset_adjustment = 0.0  # Additional offset beyond auto-centering
+
     def create_sphere_mesh(self, radius=100.0, segments=60, rings=40):
         """Create sphere geometry for 360° viewing"""
         vertices = []
@@ -200,15 +204,18 @@ class PersistentNativeViewer:
 
         # Vertical offset to center screen at comfortable viewing height
         # Offset upward by half height to center the screen at eye level
-        # (currently top edge is at eye level, we want center at eye level)
-        y_offset = half_height
+        # Plus additional user adjustment
+        y_offset = half_height + self.vertical_offset_adjustment
 
-        # Four corners of the screen (centered vertically)
+        # Horizontal offset for user adjustment
+        x_offset = self.horizontal_offset
+
+        # Four corners of the screen (centered vertically and horizontally)
         positions = [
-            [-half_width, -half_height + y_offset, z],  # Bottom left
-            [half_width, -half_height + y_offset, z],   # Bottom right
-            [half_width, half_height + y_offset, z],    # Top right
-            [-half_width, half_height + y_offset, z],   # Top left
+            [-half_width + x_offset, -half_height + y_offset, z],  # Bottom left
+            [half_width + x_offset, -half_height + y_offset, z],   # Bottom right
+            [half_width + x_offset, half_height + y_offset, z],    # Top right
+            [-half_width + x_offset, half_height + y_offset, z],   # Top left
         ]
 
         # UV coordinates
@@ -241,8 +248,11 @@ class PersistentNativeViewer:
         half_height = height / 2.0
 
         # Vertical offset to center screen at comfortable eye level
-        # Offset upward by half height to center the screen at eye level
-        y_offset = half_height
+        # Plus additional user adjustment
+        y_offset = half_height + self.vertical_offset_adjustment
+
+        # Horizontal offset for user adjustment
+        x_offset = self.horizontal_offset
 
         for v in range(segments_v + 1):
             y = -half_height + (v / segments_v) * height + y_offset
@@ -256,6 +266,9 @@ class PersistentNativeViewer:
 
                 # Scale x based on desired width
                 x = x * (width / (2.0 * distance * math.sin(math.pi * curve_amount / 2.0)))
+
+                # Apply horizontal offset
+                x = x + x_offset
 
                 u = h / segments_h
 
@@ -739,10 +752,11 @@ class PersistentNativeViewer:
         GL.glBindVertexArray(0)
 
     def keyboard_callback(self, window, key, scancode, action, mods):
-        """Handle keyboard input for video controls"""
+        """Handle keyboard input for video controls and viewer adjustments"""
         if action != glfw.PRESS and action != glfw.REPEAT:
             return
 
+        # Video playback controls
         if key == glfw.KEY_SPACE:
             # Toggle play/pause
             self.video_playing = not self.video_playing
@@ -753,19 +767,19 @@ class PersistentNativeViewer:
         elif key == glfw.KEY_R:
             # Restart video
             self.restart_video()
-        elif key == glfw.KEY_LEFT:
+        elif key == glfw.KEY_LEFT and not (mods & glfw.MOD_SHIFT):
             # Seek backward (1 second)
             frames_to_seek = -int(self.video_fps)
             self.seek_video(frames_to_seek)
-        elif key == glfw.KEY_RIGHT:
+        elif key == glfw.KEY_RIGHT and not (mods & glfw.MOD_SHIFT):
             # Seek forward (1 second)
             frames_to_seek = int(self.video_fps)
             self.seek_video(frames_to_seek)
-        elif key == glfw.KEY_DOWN:
+        elif key == glfw.KEY_DOWN and not (mods & glfw.MOD_SHIFT):
             # Seek backward (5 seconds)
             frames_to_seek = -int(self.video_fps * 5)
             self.seek_video(frames_to_seek)
-        elif key == glfw.KEY_UP:
+        elif key == glfw.KEY_UP and not (mods & glfw.MOD_SHIFT):
             # Seek forward (5 seconds)
             frames_to_seek = int(self.video_fps * 5)
             self.seek_video(frames_to_seek)
@@ -774,6 +788,93 @@ class PersistentNativeViewer:
             self.video_loop = not self.video_loop
             status = "enabled" if self.video_loop else "disabled"
             print(f"   Video loop {status}")
+
+        # Viewer adjustment controls
+        elif key == glfw.KEY_Q or key == glfw.KEY_ESCAPE:
+            # Quit viewer
+            print("\n👋 Quitting VR viewer (ComfyUI continues running)...")
+            self.should_stop = True
+
+        elif key == glfw.KEY_P:
+            # Cycle projection type
+            projections = ["flat", "curved", "dome180", "sphere360"]
+            current_idx = projections.index(self.current_projection) if self.current_projection in projections else 0
+            next_idx = (current_idx + 1) % len(projections)
+            self.current_projection = projections[next_idx]
+            self.geometry_needs_update = True
+            proj_names = {"flat": "Flat Screen", "curved": "Curved Screen", "dome180": "180° Dome", "sphere360": "360° Sphere"}
+            print(f"   📐 Projection: {proj_names.get(self.current_projection, self.current_projection)}")
+
+        elif key == glfw.KEY_LEFT_BRACKET:  # [
+            # Decrease screen distance
+            self.current_screen_distance = max(1.0, self.current_screen_distance - 0.5)
+            self.geometry_needs_update = True
+            print(f"   📏 Screen distance: {self.current_screen_distance:.1f}m")
+
+        elif key == glfw.KEY_RIGHT_BRACKET:  # ]
+            # Increase screen distance
+            self.current_screen_distance = min(10.0, self.current_screen_distance + 0.5)
+            self.geometry_needs_update = True
+            print(f"   📏 Screen distance: {self.current_screen_distance:.1f}m")
+
+        elif key == glfw.KEY_MINUS:
+            # Decrease screen size
+            self.current_screen_size = max(1.0, self.current_screen_size - 0.5)
+            self.geometry_needs_update = True
+            print(f"   📺 Screen size: {self.current_screen_size:.1f}m")
+
+        elif key == glfw.KEY_EQUAL:  # = (same key as +)
+            # Increase screen size
+            self.current_screen_size = min(10.0, self.current_screen_size + 0.5)
+            self.geometry_needs_update = True
+            print(f"   📺 Screen size: {self.current_screen_size:.1f}m")
+
+        elif key == glfw.KEY_S and (mods & glfw.MOD_SHIFT):
+            # Cycle stereo format (Shift+S)
+            formats = ["sbs", "ou", "mono"]
+            format_names = {"sbs": "Side-by-Side", "ou": "Over-Under", "mono": "Mono"}
+            current_idx = formats.index(self.current_format) if self.current_format in formats else 0
+            next_idx = (current_idx + 1) % len(formats)
+            self.current_format = formats[next_idx]
+            self.geometry_needs_update = True  # May affect aspect ratio
+            print(f"   🎬 Stereo format: {format_names.get(self.current_format, self.current_format)}")
+
+        elif key == glfw.KEY_E:
+            # Toggle swap eyes
+            self.current_swap = not self.current_swap
+            status = "ON" if self.current_swap else "OFF"
+            print(f"   👁️  Swap eyes: {status}")
+
+        elif key == glfw.KEY_W:
+            # Move screen up
+            self.vertical_offset_adjustment += 0.1
+            self.geometry_needs_update = True
+            print(f"   ⬆️  Vertical offset: {self.vertical_offset_adjustment:+.2f}m")
+
+        elif key == glfw.KEY_S and not (mods & glfw.MOD_SHIFT):
+            # Move screen down
+            self.vertical_offset_adjustment -= 0.1
+            self.geometry_needs_update = True
+            print(f"   ⬇️  Vertical offset: {self.vertical_offset_adjustment:+.2f}m")
+
+        elif key == glfw.KEY_A:
+            # Move screen left
+            self.horizontal_offset -= 0.1
+            self.geometry_needs_update = True
+            print(f"   ⬅️  Horizontal offset: {self.horizontal_offset:+.2f}m")
+
+        elif key == glfw.KEY_D:
+            # Move screen right
+            self.horizontal_offset += 0.1
+            self.geometry_needs_update = True
+            print(f"   ➡️  Horizontal offset: {self.horizontal_offset:+.2f}m")
+
+        elif key == glfw.KEY_0:
+            # Reset all adjustments
+            self.vertical_offset_adjustment = 0.0
+            self.horizontal_offset = 0.0
+            self.geometry_needs_update = True
+            print(f"   🔄 Reset alignment offsets to center")
 
     def check_for_updates(self):
         """Check if there's a new media (image or video) to display"""
@@ -819,18 +920,26 @@ class PersistentNativeViewer:
         print("🥽 NATIVE VR VIEWER STARTING")
         print("="*60)
         print("PUT ON YOUR HEADSET NOW!")
-        print("\nControls:")
-        print("  - Look around naturally with your headset")
-        print("  - Run the workflow again to update the media")
-        print("\nVideo Controls (keyboard):")
-        print("  SPACE    - Play/Pause")
-        print("  R        - Restart video")
-        print("  LEFT     - Seek backward 1 second")
-        print("  RIGHT    - Seek forward 1 second")
-        print("  DOWN     - Seek backward 5 seconds")
-        print("  UP       - Seek forward 5 seconds")
-        print("  L        - Toggle loop")
-        print("\n  - Close ComfyUI to stop the viewer")
+        print("\n📖 KEYBOARD CONTROLS (focus control window):")
+        print("="*60)
+        print("\n🎬 VIDEO PLAYBACK:")
+        print("  SPACE      - Play/Pause")
+        print("  R          - Restart video")
+        print("  LEFT/RIGHT - Seek backward/forward 1 second")
+        print("  DOWN/UP    - Seek backward/forward 5 seconds")
+        print("  L          - Toggle loop")
+        print("\n📐 VIEWER ADJUSTMENTS:")
+        print("  P          - Cycle projection type")
+        print("  [ / ]      - Decrease/Increase screen distance")
+        print("  - / =      - Decrease/Increase screen size")
+        print("  Shift+S    - Cycle stereo format")
+        print("  E          - Toggle swap eyes")
+        print("\n🎯 ALIGNMENT:")
+        print("  W / S      - Move screen up/down")
+        print("  A / D      - Move screen left/right")
+        print("  0          - Reset alignment to center")
+        print("\n🚪 OTHER:")
+        print("  Q or ESC   - Quit viewer (ComfyUI keeps running)")
         print("="*60 + "\n")
 
         # Map format strings to integers for shader
