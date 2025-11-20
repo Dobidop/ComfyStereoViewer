@@ -11,6 +11,7 @@ import ctypes  # FIXED: Added missing import
 import threading
 import queue
 import time
+import gc  # For forcing garbage collection
 import numpy as np
 from pathlib import Path
 
@@ -1203,10 +1204,25 @@ class PersistentNativeViewer:
 
         retry_count = 0
         max_retries = 2
+        context_provider = None
 
         while retry_count <= max_retries:
             try:
                 # Create visible context provider for keyboard input
+                # Destroy old one if it exists (from previous retry)
+                if context_provider is not None:
+                    try:
+                        context_provider.__exit__(None, None, None)
+                    except:
+                        pass
+                    context_provider = None
+                    # Force garbage collection to clean up resources
+                    gc.collect()
+                    # Give extra time for cleanup if this is a retry
+                    if retry_count > 0:
+                        print(f"   Forcing garbage collection and waiting additional 1s...")
+                        time.sleep(1.0)
+
                 context_provider = GLFWVisibleContextProvider()
 
                 with ContextObject(
@@ -1364,7 +1380,7 @@ class PersistentNativeViewer:
                 retry_count += 1
                 error_type = "Instance limit reached" if isinstance(e, xr.exception.LimitReachedError) else "Graphics requirements missing"
                 if retry_count <= max_retries:
-                    wait_time = retry_count * 2.0  # 2s, then 4s
+                    wait_time = retry_count * 3.0  # 3s, then 6s
                     print(f"\n⚠️  OpenXR session creation failed: {error_type}")
                     print(f"   Attempt {retry_count}/{max_retries}")
                     print(f"   Waiting {wait_time}s for runtime cleanup before retry...")
@@ -1374,7 +1390,7 @@ class PersistentNativeViewer:
                     print(f"\n❌ Failed to create OpenXR session after {max_retries} retries")
                     print(f"   Error: {error_type}")
                     print("   The OpenXR instance from the previous session may not have cleaned up yet.")
-                    print("   Try waiting 5-10 seconds before running another workflow.")
+                    print("   Try waiting 10-15 seconds before running another workflow.")
                     raise
 
             except KeyboardInterrupt:
@@ -1389,6 +1405,17 @@ class PersistentNativeViewer:
                 break
 
         # Final cleanup (always runs after retry loop)
+        # Cleanup context provider if it still exists
+        if context_provider is not None:
+            try:
+                context_provider.__exit__(None, None, None)
+            except:
+                pass
+            context_provider = None
+
+        # Force garbage collection to clean up OpenXR resources
+        gc.collect()
+
         # Cleanup video capture
         if self.video_capture is not None:
             self.video_capture.release()
@@ -1463,8 +1490,10 @@ def get_or_create_viewer():
             else:
                 print("✓ Previous viewer terminated")
                 # Give OpenXR runtime time to fully clean up
-                print("⏳ Waiting for OpenXR cleanup (2 seconds)...")
-                time.sleep(2.0)
+                print("⏳ Forcing garbage collection...")
+                gc.collect()
+                print("⏳ Waiting for OpenXR cleanup (3 seconds)...")
+                time.sleep(3.0)
 
         # Create new viewer instance
         print("🔨 Creating new VR viewer instance...")
