@@ -1201,18 +1201,22 @@ class PersistentNativeViewer:
             StereoFormat.MONO: 2,
         }
 
-        try:
-            # Create visible context provider for keyboard input
-            context_provider = GLFWVisibleContextProvider()
+        retry_count = 0
+        max_retries = 2
 
-            with ContextObject(
-                instance_create_info=xr.InstanceCreateInfo(
-                    enabled_extension_names=[
-                        xr.KHR_OPENGL_ENABLE_EXTENSION_NAME,
-                    ],
-                ),
-                context_provider=context_provider,
-            ) as context:
+        while retry_count <= max_retries:
+            try:
+                # Create visible context provider for keyboard input
+                context_provider = GLFWVisibleContextProvider()
+
+                with ContextObject(
+                    instance_create_info=xr.InstanceCreateInfo(
+                        enabled_extension_names=[
+                            xr.KHR_OPENGL_ENABLE_EXTENSION_NAME,
+                        ],
+                    ),
+                    context_provider=context_provider,
+                ) as context:
 
                 # Get GLFW window and set up keyboard callback
                 self.glfw_window = context_provider._window
@@ -1352,49 +1356,75 @@ class PersistentNativeViewer:
 
                     frame_count += 1
 
-        except KeyboardInterrupt:
-            # FIXED: Catch KeyboardInterrupt so it doesn't propagate to ComfyUI
-            print("\n⚠️ Received interrupt signal (Ctrl+C)")
-            print("Note: To stop the viewer, close ComfyUI instead")
-        except Exception as e:
-            print(f"\n❌ Error in VR viewer: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            # Cleanup video capture
-            if self.video_capture is not None:
-                self.video_capture.release()
+                # If we get here, the session completed successfully
+                break
 
-            # Cleanup audio
-            self.stop_audio()
+            except xr.exception.GraphicsRequirementsCallMissingError as e:
+                # OpenXR runtime needs more time to clean up from previous session
+                retry_count += 1
+                if retry_count <= max_retries:
+                    wait_time = retry_count * 1.5  # 1.5s, then 3s
+                    print(f"\n⚠️  OpenXR session creation failed (attempt {retry_count}/{max_retries})")
+                    print(f"   Waiting {wait_time}s for runtime cleanup before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"\n❌ Failed to create OpenXR session after {max_retries} retries")
+                    print("   Try waiting longer before restarting the viewer")
+                    raise
 
-            # Cleanup OpenGL resources
-            # Wrap in try-except as OpenGL context may already be destroyed
-            try:
-                if self.texture_id:
-                    GL.glDeleteTextures([self.texture_id])
-                if self.help_texture_id:
-                    GL.glDeleteTextures([self.help_texture_id])
-                if self.vao:
-                    GL.glDeleteVertexArrays(1, [self.vao])
-                if self.vbo:
-                    GL.glDeleteBuffers(1, [self.vbo])
-                if self.ebo:
-                    GL.glDeleteBuffers(1, [self.ebo])
-                if self.help_vao:
-                    GL.glDeleteVertexArrays(1, [self.help_vao])
-                if self.help_vbo:
-                    GL.glDeleteBuffers(1, [self.help_vbo])
-                if self.shader_program:
-                    GL.glDeleteProgram(self.shader_program)
-                if self.help_shader_program:
-                    GL.glDeleteProgram(self.help_shader_program)
-            except Exception as cleanup_error:
-                # Ignore cleanup errors (context likely already destroyed)
-                pass
+            except KeyboardInterrupt:
+                # FIXED: Catch KeyboardInterrupt so it doesn't propagate to ComfyUI
+                print("\n⚠️ Received interrupt signal (Ctrl+C)")
+                print("Note: To stop the viewer, close ComfyUI instead")
+                break
+            except Exception as e:
+                print(f"\n❌ Error in VR viewer: {e}")
+                import traceback
+                traceback.print_exc()
+                break
 
-            self.running = False
-            print("\n✓ VR viewer stopped cleanly")
+        # Final cleanup (always runs after retry loop)
+        # Cleanup video capture
+        if self.video_capture is not None:
+            self.video_capture.release()
+
+        # Cleanup audio
+        self.stop_audio()
+
+        # Cleanup OpenGL resources
+        # Wrap in try-except as OpenGL context may already be destroyed
+        try:
+            if self.texture_id:
+                GL.glDeleteTextures([self.texture_id])
+            if self.help_texture_id:
+                GL.glDeleteTextures([self.help_texture_id])
+            if self.vao:
+                GL.glDeleteVertexArrays(1, [self.vao])
+            if self.vbo:
+                GL.glDeleteBuffers(1, [self.vbo])
+            if self.ebo:
+                GL.glDeleteBuffers(1, [self.ebo])
+            if self.help_vao:
+                GL.glDeleteVertexArrays(1, [self.help_vao])
+            if self.help_vbo:
+                GL.glDeleteBuffers(1, [self.help_vbo])
+            if self.shader_program:
+                GL.glDeleteProgram(self.shader_program)
+            if self.help_shader_program:
+                GL.glDeleteProgram(self.help_shader_program)
+        except Exception as cleanup_error:
+            # Ignore cleanup errors (context likely already destroyed)
+            pass
+
+        self.running = False
+
+        # Clear global reference to this viewer instance
+        global _global_viewer
+        if _global_viewer is self:
+            _global_viewer = None
+
+        print("\n✓ VR viewer stopped cleanly")
 
     def stop(self):
         """Stop the viewer"""
