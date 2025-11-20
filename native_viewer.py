@@ -1218,143 +1218,143 @@ class PersistentNativeViewer:
                     context_provider=context_provider,
                 ) as context:
 
-                # Get GLFW window and set up keyboard callback
-                self.glfw_window = context_provider._window
-                glfw.set_key_callback(self.glfw_window, self.keyboard_callback)
-                print("✓ Keyboard controls enabled (focus the control window to use keys)")
+                    # Get GLFW window and set up keyboard callback
+                    self.glfw_window = context_provider._window
+                    glfw.set_key_callback(self.glfw_window, self.keyboard_callback)
+                    print("✓ Keyboard controls enabled (focus the control window to use keys)")
 
-                # Initialize OpenGL resources for VR (in OpenXR context)
-                self.create_shaders()
-                self.setup_geometry()
+                    # Initialize OpenGL resources for VR (in OpenXR context)
+                    self.create_shaders()
+                    self.setup_geometry()
 
-                # Load initial media if available
-                if self.current_media:
-                    if self.is_video:
-                        self.load_video(self.current_media)
-                    else:
-                        self.load_texture(self.current_media)
+                    # Load initial media if available
+                    if self.current_media:
+                        if self.is_video:
+                            self.load_video(self.current_media)
+                        else:
+                            self.load_texture(self.current_media)
 
-                # Enable depth testing
-                GL.glEnable(GL.GL_DEPTH_TEST)
-                # Disable culling temporarily for debugging
-                # GL.glEnable(GL.GL_CULL_FACE)
-                # GL.glCullFace(GL.GL_FRONT)
+                    # Enable depth testing
+                    GL.glEnable(GL.GL_DEPTH_TEST)
+                    # Disable culling temporarily for debugging
+                    # GL.glEnable(GL.GL_CULL_FACE)
+                    # GL.glCullFace(GL.GL_FRONT)
 
-                print("✓ VR session started successfully!")
-                print("✓ Headset is ready for viewing")
-                print(f"✓ Texture ID: {self.texture_id}")
-                print(f"✓ Sphere vertices: {len(self.sphere_vertices) // 5}")
-                print(f"✓ Sphere indices: {len(self.sphere_indices)}\n")
+                    print("✓ VR session started successfully!")
+                    print("✓ Headset is ready for viewing")
+                    print(f"✓ Texture ID: {self.texture_id}")
+                    print(f"✓ Sphere vertices: {len(self.sphere_vertices) // 5}")
+                    print(f"✓ Sphere indices: {len(self.sphere_indices)}\n")
 
-                frame_count = 0
-                frames_rendered = 0
+                    frame_count = 0
+                    frames_rendered = 0
 
-                for frame_index, frame_state in enumerate(context.frame_loop()):
-                    # Check for stop signal
-                    if self.should_stop:
-                        print("\n🛑 Stopping VR viewer...")
-                        break
+                    for frame_index, frame_state in enumerate(context.frame_loop()):
+                        # Check for stop signal
+                        if self.should_stop:
+                            print("\n🛑 Stopping VR viewer...")
+                            break
 
-                    # Check for media updates every few frames
-                    if frame_count % 30 == 0:
-                        self.check_for_updates()
+                        # Check for media updates every few frames
+                        if frame_count % 30 == 0:
+                            self.check_for_updates()
 
-                        # Rebuild geometry if projection type changed
-                        if self.geometry_needs_update:
-                            print("🔨 Rebuilding geometry...")
-                            self.setup_geometry()
-                            self.geometry_needs_update = False
-                            print("✓ Geometry updated!")
+                            # Rebuild geometry if projection type changed
+                            if self.geometry_needs_update:
+                                print("🔨 Rebuilding geometry...")
+                                self.setup_geometry()
+                                self.geometry_needs_update = False
+                                print("✓ Geometry updated!")
 
-                    # Poll keyboard events and render control window
-                    if self.glfw_window:
-                        glfw.poll_events()
-                        self.render_control_window()
+                        # Poll keyboard events and render control window
+                        if self.glfw_window:
+                            glfw.poll_events()
+                            self.render_control_window()
 
-                    # Advance video frame if playing
-                    if self.is_video and self.video_playing:
-                        current_time = time.time()
-                        elapsed = current_time - self.last_frame_time
+                        # Advance video frame if playing
+                        if self.is_video and self.video_playing:
+                            current_time = time.time()
+                            elapsed = current_time - self.last_frame_time
 
-                        # Check if it's time for next frame
-                        if elapsed >= self.video_frame_time:
-                            self.get_next_video_frame()
-                            self.last_frame_time = current_time
+                            # Check if it's time for next frame
+                            if elapsed >= self.video_frame_time:
+                                self.get_next_video_frame()
+                                self.last_frame_time = current_time
 
-                    format_int = format_map.get(self.current_format, 0)
+                        format_int = format_map.get(self.current_format, 0)
 
-                    # Render to each eye
-                    for view_index, view in enumerate(context.view_loop(frame_state)):
+                        # Render to each eye
+                        for view_index, view in enumerate(context.view_loop(frame_state)):
 
-                        # Clear buffers to black
-                        GL.glClearColor(0.0, 0.0, 0.0, 1.0)  # Black background
-                        GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
+                            # Clear buffers to black
+                            GL.glClearColor(0.0, 0.0, 0.0, 1.0)  # Black background
+                            GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
-                        if self.texture_id is None:
-                            # No image loaded yet, show black background
-                            if frame_count == 0:
-                                print("⚠️  Waiting for media to load...")
-                            continue
+                            if self.texture_id is None:
+                                # No image loaded yet, show black background
+                                if frame_count == 0:
+                                    print("⚠️  Waiting for media to load...")
+                                continue
 
-                        # Debug: Print first frame render
-                        if frames_rendered == 0:
-                            print(f"🎬 Rendering first frame (eye {view_index})")
+                            # Debug: Print first frame render
+                            if frames_rendered == 0:
+                                print(f"🎬 Rendering first frame (eye {view_index})")
 
-                        frames_rendered += 1
+                            frames_rendered += 1
 
-                        # Use shader
-                        GL.glUseProgram(self.shader_program)
+                            # Use shader
+                            GL.glUseProgram(self.shader_program)
 
-                        # Set up projection matrix
-                        projection = Matrix4x4f.create_projection_fov(
-                            graphics_api=GraphicsAPI.OPENGL,
-                            fov=view.fov,
-                            near_z=0.1,
-                            far_z=1000.0,  # Increased for larger sphere
-                        )
+                            # Set up projection matrix
+                            projection = Matrix4x4f.create_projection_fov(
+                                graphics_api=GraphicsAPI.OPENGL,
+                                fov=view.fov,
+                                near_z=0.1,
+                                far_z=1000.0,  # Increased for larger sphere
+                            )
 
-                        # Set up view matrix
-                        to_view = Matrix4x4f.create_translation_rotation_scale(
-                            translation=view.pose.position,
-                            rotation=view.pose.orientation,
-                            scale=(1, 1, 1),
-                        )
-                        view_matrix = Matrix4x4f.invert_rigid_body(to_view)
+                            # Set up view matrix
+                            to_view = Matrix4x4f.create_translation_rotation_scale(
+                                translation=view.pose.position,
+                                rotation=view.pose.orientation,
+                                scale=(1, 1, 1),
+                            )
+                            view_matrix = Matrix4x4f.invert_rigid_body(to_view)
 
-                        # Model matrix
-                        model_matrix = np.eye(4, dtype=np.float32)
+                            # Model matrix
+                            model_matrix = np.eye(4, dtype=np.float32)
 
-                        # Set uniforms
-                        proj_loc = GL.glGetUniformLocation(self.shader_program, "projection")
-                        view_loc = GL.glGetUniformLocation(self.shader_program, "view")
-                        model_loc = GL.glGetUniformLocation(self.shader_program, "model")
-                        format_loc = GL.glGetUniformLocation(self.shader_program, "stereoFormat")
-                        eye_loc = GL.glGetUniformLocation(self.shader_program, "eyeIndex")
-                        swap_loc = GL.glGetUniformLocation(self.shader_program, "swapEyes")
+                            # Set uniforms
+                            proj_loc = GL.glGetUniformLocation(self.shader_program, "projection")
+                            view_loc = GL.glGetUniformLocation(self.shader_program, "view")
+                            model_loc = GL.glGetUniformLocation(self.shader_program, "model")
+                            format_loc = GL.glGetUniformLocation(self.shader_program, "stereoFormat")
+                            eye_loc = GL.glGetUniformLocation(self.shader_program, "eyeIndex")
+                            swap_loc = GL.glGetUniformLocation(self.shader_program, "swapEyes")
 
-                        GL.glUniformMatrix4fv(proj_loc, 1, GL.GL_FALSE, projection.as_numpy().flatten("F"))
-                        GL.glUniformMatrix4fv(view_loc, 1, GL.GL_FALSE, view_matrix.as_numpy().flatten("F"))
-                        GL.glUniformMatrix4fv(model_loc, 1, GL.GL_FALSE, model_matrix.flatten("F"))
-                        GL.glUniform1i(format_loc, format_int)
-                        GL.glUniform1i(eye_loc, view_index)
-                        GL.glUniform1i(swap_loc, 1 if self.current_swap else 0)
+                            GL.glUniformMatrix4fv(proj_loc, 1, GL.GL_FALSE, projection.as_numpy().flatten("F"))
+                            GL.glUniformMatrix4fv(view_loc, 1, GL.GL_FALSE, view_matrix.as_numpy().flatten("F"))
+                            GL.glUniformMatrix4fv(model_loc, 1, GL.GL_FALSE, model_matrix.flatten("F"))
+                            GL.glUniform1i(format_loc, format_int)
+                            GL.glUniform1i(eye_loc, view_index)
+                            GL.glUniform1i(swap_loc, 1 if self.current_swap else 0)
 
-                        # Bind texture
-                        GL.glActiveTexture(GL.GL_TEXTURE0)
-                        GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_id)
-                        GL.glUniform1i(GL.glGetUniformLocation(self.shader_program, "texture1"), 0)
+                            # Bind texture
+                            GL.glActiveTexture(GL.GL_TEXTURE0)
+                            GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_id)
+                            GL.glUniform1i(GL.glGetUniformLocation(self.shader_program, "texture1"), 0)
 
-                        # Draw sphere
-                        GL.glBindVertexArray(self.vao)
-                        GL.glDrawElements(
-                            GL.GL_TRIANGLES,
-                            len(self.sphere_indices),
-                            GL.GL_UNSIGNED_INT,
-                            None
-                        )
-                        GL.glBindVertexArray(0)
+                            # Draw sphere
+                            GL.glBindVertexArray(self.vao)
+                            GL.glDrawElements(
+                                GL.GL_TRIANGLES,
+                                len(self.sphere_indices),
+                                GL.GL_UNSIGNED_INT,
+                                None
+                            )
+                            GL.glBindVertexArray(0)
 
-                    frame_count += 1
+                        frame_count += 1
 
                 # If we get here, the session completed successfully
                 break
