@@ -198,12 +198,17 @@ class PersistentNativeViewer:
         # Position the screen at the given distance
         z = -distance
 
-        # Four corners of the screen
+        # Vertical offset to center screen at comfortable viewing height
+        # Testing shows screen should be at origin for proper centering
+        # OpenXR view matrices already account for head-relative positioning
+        y_offset = 0.0
+
+        # Four corners of the screen (centered vertically)
         positions = [
-            [-half_width, -half_height, z],  # Bottom left
-            [half_width, -half_height, z],   # Bottom right
-            [half_width, half_height, z],    # Top right
-            [-half_width, half_height, z],   # Top left
+            [-half_width, -half_height + y_offset, z],  # Bottom left
+            [half_width, -half_height + y_offset, z],   # Bottom right
+            [half_width, half_height + y_offset, z],    # Top right
+            [-half_width, half_height + y_offset, z],   # Top left
         ]
 
         # UV coordinates
@@ -235,8 +240,11 @@ class PersistentNativeViewer:
 
         half_height = height / 2.0
 
+        # Vertical offset to center screen at comfortable eye level
+        y_offset = 0.0  # Center at eye level (OpenXR tracking handles this)
+
         for v in range(segments_v + 1):
-            y = -half_height + (v / segments_v) * height
+            y = -half_height + (v / segments_v) * height + y_offset
             v_uv = 1.0 - (v / segments_v)
 
             for h in range(segments_h + 1):
@@ -912,14 +920,14 @@ class PersistentNativeViewer:
                     # Render to each eye
                     for view_index, view in enumerate(context.view_loop(frame_state)):
 
-                        # Clear buffers - use dark blue to distinguish from black
-                        GL.glClearColor(0.0, 0.0, 0.3, 1.0)  # Dark blue background
+                        # Clear buffers to black
+                        GL.glClearColor(0.0, 0.0, 0.0, 1.0)  # Black background
                         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
                         if self.texture_id is None:
-                            # No image loaded yet, show dark blue background
+                            # No image loaded yet, show black background
                             if frame_count == 0:
-                                print("⚠️  Waiting for image to load...")
+                                print("⚠️  Waiting for media to load...")
                             continue
 
                         # Debug: Print first frame render
